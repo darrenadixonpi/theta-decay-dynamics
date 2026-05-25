@@ -1,0 +1,5 @@
+# Databento v6 validation pipeline (see Databento_v6_Spec.md)
+databento>=0.77
+pandas>=2.0
+pyarrow>=14.0
+yfinance>=0.2
