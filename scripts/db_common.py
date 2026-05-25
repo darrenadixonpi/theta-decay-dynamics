@@ -34,6 +34,12 @@ MIN_BID = 0.05
 MIN_OI = 100
 MIN_VOLUME = 10
 
+# Pilot hygiene (v6.3): chain gaps, censoring, IV-rank proxy
+CHAIN_GAP_CALENDAR_DAYS = 5
+IV_RANK_LOOKBACK = 252
+IV_RANK_MIN = 0.50
+CENSORED_EXIT_REASONS = ("data_end", "data_gap", "last_mark")
+
 # Section 8 VIX regime bins
 VIX_REGIMES = (
     ("low", 0.0, 15.0),

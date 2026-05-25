@@ -701,6 +701,9 @@ def fig_v6_pilot():
         g = trades[trades['regime'] == r]
         hold_med.append(g[g['strategy'] == 'hold']['pnl_net'].median())
         mgd_med.append(g[g['strategy'] == 'managed']['pnl_net'].median())
+    n_entries = trades['entry_date'].nunique()
+    d0 = trades['entry_date'].min().strftime('%Y-%m-%d')
+    d1 = trades['entry_date'].max().strftime('%Y-%m-%d')
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.bar(x - w / 2, hold_med, w, label='Hold', color='#1E40AF')
     ax.bar(x + w / 2, mgd_med, w, label='Managed', color='#7C3AED')
@@ -708,11 +711,16 @@ def fig_v6_pilot():
     ax.set_xticks(x)
     ax.set_xticklabels([r.title() for r in regimes])
     ax.set_ylabel('Median Net P&L ($/contract)')
-    ax.set_title('Pilot SPY Chain Backtest by VIX Regime\nMar 2020, Jun/Oct 2022, Jan 2023 (n=15 entries)')
+    ax.set_title(
+        f'Pilot SPY Chain Backtest by VIX Regime\n'
+        f'{n_entries} entry weeks ({d0} to {d1}); v6.4 exit-reason methodology'
+    )
     ax.legend()
     for i, (h, m) in enumerate(zip(hold_med, mgd_med)):
         ax.text(i - w / 2, h, f'${h:.0f}', ha='center', va='bottom', fontsize=8)
         ax.text(i + w / 2, m, f'${m:.0f}', ha='center', va='bottom', fontsize=8)
+        if abs(h - m) < 0.5:
+            ax.text(i, max(h, m) + 8, 'tie', ha='center', va='bottom', fontsize=7, color='#6B7280')
     save(fig, 'fig_v6_pilot')
 
 if __name__=='__main__':

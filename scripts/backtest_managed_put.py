@@ -7,6 +7,7 @@ Output: data/derived/trades_backtest.parquet
 Usage:
   python scripts/backtest_managed_put.py
   python scripts/backtest_managed_put.py --start 2022-01-01 --end 2024-12-31
+  python scripts/backtest_managed_put.py --iv-rank-filter
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from db_common import (  # noqa: E402
+    CHAIN_GAP_CALENDAR_DAYS,
     COMMISSION_PER_LEG,
     CONTRACT_MULTIPLIER,
     DERIVED_DIR,
@@ -30,6 +32,8 @@ from db_common import (  # noqa: E402
     ENTRY_DTE_TARGET,
     EXIT_DTE,
     EXTERNAL_DIR,
+    IV_RANK_LOOKBACK,
+    IV_RANK_MIN,
     MONEYNESS_MAX,
     MONEYNESS_MIN,
     PROFIT_FRACTION,
@@ -43,7 +47,7 @@ OUT_PATH = DERIVED_DIR / "trades_backtest.parquet"
 def load_vix() -> pd.DataFrame:
     path = EXTERNAL_DIR / "vixcls.csv"
     if not path.is_file():
-        return pd.DataFrame(columns=["date", "vix"])
+        return pd.DataFrame(columns=["date", "vix", "vix_pct_rank"])
     vix = pd.read_csv(path)
     date_col = next(
         (c for c in ("DATE", "date", "observation_date") if c in vix.columns),
@@ -53,7 +57,26 @@ def load_vix() -> pd.DataFrame:
     vix = vix[[date_col, val_col]].rename(columns={date_col: "date", val_col: "vix"})
     vix["date"] = pd.to_datetime(vix["date"], errors="coerce")
     vix["vix"] = pd.to_numeric(vix["vix"], errors="coerce")
-    return vix.dropna().sort_values("date")
+    vix = vix.dropna().sort_values("date").reset_index(drop=True)
+    return add_vix_percentile_rank(vix)
+
+
+def add_vix_percentile_rank(vix: pd.DataFrame, lookback: int = IV_RANK_LOOKBACK) -> pd.DataFrame:
+    """252-day VIX percentile rank (proxy for Section 20 IV Rank)."""
+    if vix.empty:
+        vix["vix_pct_rank"] = np.nan
+        return vix
+    vals = vix["vix"].to_numpy(dtype=float)
+    ranks: list[float] = []
+    for i, val in enumerate(vals):
+        window = vals[max(0, i - lookback + 1) : i + 1]
+        if len(window) < 20:
+            ranks.append(float("nan"))
+        else:
+            ranks.append(float((window <= val).mean()))
+    vix = vix.copy()
+    vix["vix_pct_rank"] = ranks
+    return vix
 
 
 def entry_dates(dates: pd.Series) -> pd.DatetimeIndex:
@@ -122,12 +145,22 @@ def simulate_trade(
         return {}
 
     profit_target = PROFIT_FRACTION * entry_mid
+    exit_reason: str | None = None
     exit_date = path.iloc[-1]["date"]
     exit_mid = float(path.iloc[-1]["mid"])
     exit_spread_pct = float(path.iloc[-1]["spread_pct"])
-    exit_reason = "last_mark"
 
-    for _, row in path.iloc[1:].iterrows():
+    prev = path.iloc[0]
+    for i in range(1, len(path)):
+        row = path.iloc[i]
+        gap_days = (pd.Timestamp(row["date"]) - pd.Timestamp(prev["date"])).days
+        if gap_days > CHAIN_GAP_CALENDAR_DAYS:
+            exit_date = prev["date"]
+            exit_mid = float(prev["mid"])
+            exit_spread_pct = float(prev["spread_pct"])
+            exit_reason = "data_gap"
+            break
+
         mark = float(row["mid"])
         if managed:
             pnl_per_share = entry_mid - mark
@@ -143,14 +176,30 @@ def simulate_trade(
                 exit_spread_pct = float(row["spread_pct"])
                 exit_reason = "dte_21"
                 break
+        elif pd.Timestamp(row["expiry"]) <= row["date"] or int(row["dte"]) <= 0:
+            intrinsic = max(float(row["strike"]) - float(row["spot"]), 0.0)
+            exit_date = row["date"]
+            exit_mid = intrinsic
+            exit_spread_pct = 0.0
+            exit_reason = "expiry"
+            break
+        prev = row
+
+    if exit_reason is None:
+        last = path.iloc[-1]
+        exit_date = last["date"]
+        if managed:
+            exit_mid = float(last["mid"])
+            exit_spread_pct = float(last["spread_pct"])
+            exit_reason = "expiry" if int(last["dte"]) <= 0 else "data_end"
+        elif pd.Timestamp(last["expiry"]) <= last["date"] or int(last["dte"]) <= 0:
+            exit_mid = max(float(last["strike"]) - float(last["spot"]), 0.0)
+            exit_spread_pct = 0.0
+            exit_reason = "expiry"
         else:
-            if pd.Timestamp(row["expiry"]) <= row["date"] or int(row["dte"]) <= 0:
-                intrinsic = max(float(row["strike"]) - float(row["spot"]), 0.0)
-                exit_date = row["date"]
-                exit_mid = intrinsic
-                exit_spread_pct = 0.0
-                exit_reason = "expiry"
-                break
+            exit_mid = float(last["mid"])
+            exit_spread_pct = float(last["spread_pct"])
+            exit_reason = "data_end"
 
     pnl_gross = (entry_mid - exit_mid) * CONTRACT_MULTIPLIER
     costs = round_trip_cost(entry_mid, exit_mid, entry_spread_pct, exit_spread_pct)
@@ -168,7 +217,14 @@ def simulate_trade(
     }
 
 
-def run_backtest(chain: pd.DataFrame, vix: pd.DataFrame, start: str | None, end: str | None) -> pd.DataFrame:
+def run_backtest(
+    chain: pd.DataFrame,
+    vix: pd.DataFrame,
+    start: str | None,
+    end: str | None,
+    *,
+    iv_rank_filter: bool,
+) -> pd.DataFrame:
     if start:
         chain = chain[chain["date"] >= pd.Timestamp(start)]
     if end:
@@ -178,6 +234,12 @@ def run_backtest(chain: pd.DataFrame, vix: pd.DataFrame, start: str | None, end:
     rows: list[dict[str, object]] = []
 
     for day in entries:
+        vix_row = vix[vix["date"] == day]
+        vix_pct_rank = float(vix_row.iloc[0]["vix_pct_rank"]) if len(vix_row) else float("nan")
+        iv_rank_pass = bool(vix_pct_rank >= IV_RANK_MIN) if not np.isnan(vix_pct_rank) else False
+        if iv_rank_filter and not iv_rank_pass:
+            continue
+
         pick = pick_entry(chain, day)
         if pick is None:
             continue
@@ -187,8 +249,9 @@ def run_backtest(chain: pd.DataFrame, vix: pd.DataFrame, start: str | None, end:
             "spot": float(pick["spot"]),
             "moneyness_sk": float(pick["moneyness_sk"]),
             "entry_dte": int(pick["dte"]),
+            "vix_pct_rank": vix_pct_rank,
+            "iv_rank_pass": iv_rank_pass,
         }
-        vix_row = vix[vix["date"] == day]
         regime = vix_regime(float(vix_row.iloc[0]["vix"])) if len(vix_row) else "unknown"
 
         for strategy, managed in (("managed", True), ("hold", False)):
@@ -214,6 +277,11 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=OUT_PATH)
     parser.add_argument("--start", help="Inclusive YYYY-MM-DD")
     parser.add_argument("--end", help="Inclusive YYYY-MM-DD")
+    parser.add_argument(
+        "--iv-rank-filter",
+        action="store_true",
+        help=f"Skip entries when 252d VIX percentile rank < {IV_RANK_MIN:.0%} (Section 20 proxy)",
+    )
     args = parser.parse_args()
 
     if not args.chain.is_file():
@@ -222,7 +290,7 @@ def main() -> None:
     chain = pd.read_parquet(args.chain)
     chain["date"] = pd.to_datetime(chain["date"])
     vix = load_vix()
-    trades = run_backtest(chain, vix, args.start, args.end)
+    trades = run_backtest(chain, vix, args.start, args.end, iv_rank_filter=args.iv_rank_filter)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     trades.to_parquet(args.out, index=False)
     n = trades["entry_date"].nunique() if not trades.empty else 0

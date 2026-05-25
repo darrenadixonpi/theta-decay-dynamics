@@ -32,8 +32,9 @@ python scripts/build_chain_eod.py --start 2022-06-01 --end 2022-06-30
 # Force rebuild cbbo cache after re-pulling a month:
 python scripts/build_chain_eod.py --refresh-cbbo
 
-# 6. Backtest Section 20 rules
-python scripts/backtest_managed_put.py --start 2022-06-01 --end 2022-06-30
+# 6. Backtest Section 20 rules (v6.3: data_end/data_gap exit labels, optional IV-rank proxy)
+python scripts/backtest_managed_put.py
+python scripts/backtest_managed_put.py --iv-rank-filter   # skip entries with 252d VIX pct &lt; 50%
 
 # 7. Summary JSON for Appendix B
 python scripts/backtest_report_v6.py

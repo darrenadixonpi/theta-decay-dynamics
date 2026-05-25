@@ -10,7 +10,7 @@ from pypdf import PdfReader
 REPORT_DIR = Path(__file__).resolve().parent
 BUILD = REPORT_DIR / "build_report.py"
 CHARTS = REPORT_DIR / "charts"
-PDF = REPORT_DIR / "output" / "Theta_Decay_Dynamics_v6.2.pdf"
+PDF = REPORT_DIR / "output" / "Theta_Decay_Dynamics_v6.4.pdf"
 
 issues: list[str] = []
 

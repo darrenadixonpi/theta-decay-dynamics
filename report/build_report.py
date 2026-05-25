@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Theta Decay Dynamics PDF (v6.1)."""
+"""Build Theta Decay Dynamics PDF (v6.4)."""
 from __future__ import annotations
 
 import io
@@ -29,7 +29,7 @@ from PIL import Image as PILImage
 REPORT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = REPORT_DIR.parent
 CHARTS = REPORT_DIR / "charts"
-OUT_PDF = REPORT_DIR / "output" / "Theta_Decay_Dynamics_v6.2.pdf"
+OUT_PDF = REPORT_DIR / "output" / "Theta_Decay_Dynamics_v6.4.pdf"
 SIGNALS = json.loads((REPORT_DIR / "signal_summary.json").read_text(encoding="utf-8"))
 V6_SUMMARY_PATH = REPO_ROOT / "data" / "v6" / "v6_summary.json"
 
@@ -63,6 +63,87 @@ def _pilot_n() -> int:
     return int(v6["n_entries"]) if v6 and v6.get("n_entries") else 0
 
 
+def _pilot_p05() -> str:
+    v6 = load_v6_summary()
+    if not v6:
+        return "n/a"
+    hold = v6.get("by_strategy", {}).get("hold", {})
+    return _usd(hold.get("p05_pnl_net"))
+
+
+def _pilot_paired_note() -> str:
+    v6 = load_v6_summary()
+    if not v6:
+        return ""
+    paired = v6.get("pilot_paired_summary", {})
+    if not paired:
+        return ""
+    total = paired.get("weeks_total", 0)
+    identical = paired.get("weeks_identical_pnl", 0)
+    hold_hi = paired.get("weeks_hold_higher", 0)
+    if not total:
+        return ""
+    return (
+        f"Regime medians can tie when censored exits dominate ({identical}/{total} weeks identical P&amp;L); "
+        f"hold exceeds managed on {hold_hi}/{total} weeks where they differ (early profit-take vs hold-to-mark)."
+    )
+
+
+def _append_pilot_results_table(story, block: dict, *, heading: str | None = None) -> None:
+    bs = block.get("by_strategy", {})
+    hold = bs.get("hold")
+    mgd = bs.get("managed")
+    if not hold and not mgd:
+        return
+    rows = []
+    if hold:
+        med_h = hold.get("median_pnl_net_ci", {})
+        p05_h = hold.get("p05_pnl_net_ci", {})
+        rows.append(
+            [
+                "Hold",
+                str(hold.get("count", 0)),
+                _usd(hold.get("median_pnl_net")) + _ci_band(med_h),
+                _usd(hold.get("p05_pnl_net")) + _ci_band(p05_h),
+                _usd(hold.get("p95_pnl_net")),
+                _pct100(hold.get("win_rate")),
+            ]
+        )
+    if mgd:
+        med_m = mgd.get("median_pnl_net_ci", {})
+        p05_m = mgd.get("p05_pnl_net_ci", {})
+        rows.append(
+            [
+                "Managed",
+                str(mgd.get("count", 0)),
+                _usd(mgd.get("median_pnl_net")) + _ci_band(med_m),
+                _usd(mgd.get("p05_pnl_net")) + _ci_band(p05_m),
+                _usd(mgd.get("p95_pnl_net")),
+                _pct100(mgd.get("win_rate")),
+            ]
+        )
+    footnote = "95% CIs from 10,000 bootstrap resamples of trade-level P&amp;L. Pilot sample; not inferential."
+    if hold is None or mgd is None:
+        footnote += " Hold rows are omitted when all hold exits are censored in this slice."
+    add_table(
+        story,
+        ["Strategy", "n", "Median net P&amp;L", "5th %ile", "95th %ile", "Win %"],
+        rows,
+        col_widths=[0.14, 0.06, 0.28, 0.22, 0.14, 0.10],
+        footnote=footnote,
+        heading=heading,
+    )
+    diff = block.get("managed_minus_hold", {})
+    if diff:
+        dci = diff.get("median_diff_ci", {})
+        story.append(
+            P(
+                f"<b>Managed &minus; hold (paired):</b> median {_usd(diff.get('median_diff'))} per contract"
+                f"{_ci_band(dci)} across {diff.get('count', 0)} entry weeks."
+            )
+        )
+
+
 def _ci_band(ci: dict | None) -> str:
     if not ci or ci.get("lo") is None or ci.get("hi") is None:
         return ""
@@ -76,6 +157,9 @@ GRID_CLR = colors.HexColor("#E2E8F0")
 BLUE = colors.HexColor("#2563EB")
 DARK = colors.HexColor("#1F2937")
 MID = colors.HexColor("#6B7280")
+TOC_ACCENT = colors.HexColor("#EEF2FF")
+TOC_PART_BG = colors.HexColor("#1E293B")
+SIM_CAPTION_TAG = " <i>[Illustrative simulation.]</i>"
 PAGE_W, PAGE_H = letter
 MARGIN_LR = 0.85 * inch
 MARGIN_TB = 0.75 * inch
@@ -290,10 +374,37 @@ def build_styles():
             "TOCEntry",
             parent=base["Normal"],
             fontName="Helvetica",
-            fontSize=9.5,
-            leading=14,
+            fontSize=9,
+            leading=12.5,
             textColor=DARK,
-            tabStops=[(CONTENT_W, TA_RIGHT, ".")],
+            leftIndent=10,
+            tabStops=[(CONTENT_W - 10, TA_RIGHT, ".")],
+        ),
+        "TOCPart": ParagraphStyle(
+            "TOCPart",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=8.5,
+            leading=11,
+            textColor=colors.white,
+            spaceBefore=0,
+            spaceAfter=0,
+        ),
+        "TOCPartBar": ParagraphStyle(
+            "TOCPartBar",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=8.5,
+            leading=11,
+            textColor=colors.white,
+        ),
+        "TOCRoadmap": ParagraphStyle(
+            "TOCRoadmap",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=8.5,
+            leading=12,
+            textColor=DARK,
         ),
         "Ref": ParagraphStyle(
             "Ref",
@@ -338,13 +449,14 @@ ST = build_styles()
 
 # HTML entities → Unicode / reportlab markup (Helvetica supports Greek).
 _MATH_ENTITIES = {
-    "&sigma;": "σ", "&theta;": "θ", "&Delta;": "Δ", "&Gamma;": "Γ",
+    "&sigma;": "σ", "&theta;": "θ", "&Delta;": "Δ", "&Gamma;": "Γ", "&nu;": "ν", "&Pi;": "Π",
     "&lambda;": "λ", "&mu;": "μ", "&phi;": "φ", "&rho;": "ρ", "&alpha;": "α",
     "&part;": "∂", "&middot;": "·", "&ndash;": "–", "&mdash;": "—",
     "&asymp;": "≈", "&radic;": "√", "&frac12;": "½", "&minus;": "−",
     "&le;": "≤", "&ge;": "≥", "&times;": "×", "&rarr;": "→", "&prop;": "∝",
     "&bull;": "•", "&rsquo;": "’", "&ldquo;": "“", "&rdquo;": "”",
     "&sup2;": "<super>2</super>", "&sup3;": "<super>3</super>",
+    "&sim;": "∼", "&sum;": "Σ",
 }
 
 
@@ -359,6 +471,35 @@ def normalize_markup(text: str) -> str:
 
 def P(text: str, style: str = "Body") -> Paragraph:
     return Paragraph(normalize_markup(text), ST[style])
+
+
+def mc_caption(text: str) -> str:
+    """Tag Monte Carlo figure captions consistently."""
+    if "Illustrative simulation" in text:
+        return text
+    return text + SIM_CAPTION_TAG
+
+
+def callout_box(story, text: str, tone: str = "info"):
+    """Shaded callout panel for operational or statistical warnings."""
+    bg = colors.HexColor("#EFF6FF") if tone == "info" else colors.HexColor("#FEF3C7")
+    border = BLUE if tone == "info" else colors.HexColor("#D97706")
+    t = Table([[P(text, "Body")]], colWidths=[CONTENT_W])
+    t.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), bg),
+                ("BOX", (0, 0), (-1, -1), 0.75, border),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
+    story.append(Spacer(1, 4))
+    story.append(t)
+    story.append(Spacer(1, 8))
 
 
 def section(
@@ -633,7 +774,7 @@ def add_title_page(story):
     story.append(P("Moneyness, Volatility &amp; Strategy-Level Analysis", "Subtitle"))
     story.append(P("With a Merton Jump-Diffusion Extension for Event-Driven Underlyings", "Subtitle"))
     story.append(Spacer(1, 0.2 * inch))
-    story.append(P("v6.2 &mdash; May 2026", "Subtitle"))
+    story.append(P("v6.4 &mdash; May 2026", "Subtitle"))
     story.append(Spacer(1, 0.35 * inch))
     story.append(
         P(
@@ -646,60 +787,271 @@ def add_title_page(story):
     story.append(PageBreak())
 
 
-TOC_ENTRIES = [
-    ("sec1", "1. Introduction"),
-    ("sec2", "2. Mathematical Framework"),
-    ("sec3", "3. Black-Scholes Theta"),
-    ("sec4", "4. Single-Leg Strategies"),
-    ("sec5", "5. Multi-Leg Strategies"),
-    ("sec6", "6. Volatility Skew &amp; Term Structure"),
-    ("sec7", "7. Preliminary Empirical Evidence"),
-    ("sec8", "8. Regime Analysis"),
-    ("sec9", "9. Transaction Costs"),
-    ("sec10", "10. Risk Metrics &amp; Tail Analysis"),
-    ("sec11", "11. Merton Jump-Diffusion Extension"),
-    ("sec12", "12. Rule Sensitivity &amp; Benchmarks (Simulated)"),
-    ("sec13", "13. Second-Order Greeks"),
-    ("sec14", "14. Realized vs Implied Variance"),
-    ("sec15", "15. Dynamic Greek Evolution"),
-    ("sec16", "16. Hedging Framework"),
-    ("sec17", "17. Volatility Surface Dynamics"),
-    ("sec18", "18. Model Risk"),
-    ("sec19", "19. Execution Microstructure"),
-    ("sec20", "20. Decision Framework &amp; Trade Rules"),
-    ("sec21", "21. Monte Carlo Scenario Analysis"),
-    ("sec22", "22. Master Reference: Key Relationships"),
-    ("sec23", "23. Unified Interpretation"),
-    ("secA", "Appendix A: Methodology"),
-    ("secB", "Appendix B: Historical Validation (Pilot)"),
-    ("secFW", "Future Work"),
-    ("secR", "References"),
+TOC_GROUPS: list[tuple[str | None, list[tuple[str, str]]]] = [
+    (
+        "Quick Start",
+        [
+            ("secDesk", "Desk Quick Reference"),
+        ],
+    ),
+    (
+        "Part I · Foundations",
+        [
+            ("sec1", "1. Introduction"),
+            ("sec2", "2. Mathematical Framework"),
+            ("sec3", "3. Black-Scholes Theta"),
+            ("sec4", "4. Single-Leg Strategies"),
+            ("sec5", "5. Multi-Leg Strategies"),
+            ("sec6", "6. Skew &amp; Term Structure"),
+        ],
+    ),
+    (
+        "Part II · Evidence &amp; Risk",
+        [
+            ("sec7", "7. Preliminary Empirical Evidence"),
+            ("sec8", "8. Regime Analysis"),
+            ("sec9", "9. Transaction Costs"),
+            ("sec10", "10. Risk &amp; Tail Analysis"),
+            ("sec11", "11. Merton Jump-Diffusion"),
+        ],
+    ),
+    (
+        "Part III · Simulated Validation",
+        [
+            ("sec12", "12. Parameter Sweeps &amp; Benchmarks"),
+        ],
+    ),
+    (
+        "Part IV · Greek Framework",
+        [
+            ("sec13", "13. Second-Order Greeks"),
+            ("sec14", "14. Realized vs Implied Variance"),
+            ("sec15", "15. Dynamic Greek Evolution"),
+            ("sec16", "16. Hedging Framework"),
+            ("sec17", "17. Volatility Surface Dynamics"),
+            ("sec18", "18. Model Risk"),
+            ("sec19", "19. Execution Microstructure"),
+        ],
+    ),
+    (
+        "Part V · Rules &amp; Stress Tests",
+        [
+            ("sec20", "20. Decision Framework &amp; Trade Rules"),
+            ("sec21", "21. Monte Carlo Scenarios"),
+        ],
+    ),
+    (
+        "Part VI · Synthesis",
+        [
+            ("sec22", "22. Key Relationships (Reference)"),
+            ("sec23", "23. Unified Interpretation"),
+        ],
+    ),
+    (
+        "Back Matter",
+        [
+            ("secA", "Appendix A: Methodology"),
+            ("secB", "Appendix B: Chain Validation (Pilot)"),
+            ("secC", "Appendix C: Selected Derivations"),
+            ("secFW", "Future Work"),
+            ("secR", "References"),
+        ],
+    ),
 ]
+
+# Flat list for bookmark/page-map compatibility
+TOC_ENTRIES = [entry for _, entries in TOC_GROUPS for entry in entries]
+
+TOC_LEFT_GROUPS = TOC_GROUPS[:4]   # Quick Start through Part III
+TOC_RIGHT_GROUPS = TOC_GROUPS[4:]    # Part IV through Back Matter
+
+
+def _toc_column_rows(
+    groups: list[tuple[str | None, list[tuple[str, str]]]],
+    page_map: dict[str, int] | None,
+) -> tuple[list[list], list[str]]:
+    """Build table rows for one TOC column. Returns (rows, row_kinds)."""
+    rows: list[list] = []
+    kinds: list[str] = []
+    for part_name, entries in groups:
+        if part_name:
+            rows.append([Paragraph(normalize_markup(part_name), ST["TOCPartBar"])])
+            kinds.append("part")
+        for key, label in entries:
+            if page_map and key in page_map:
+                text = (
+                    f'<link href="#{key}" color="#2563EB">{label}</link>'
+                    f'<font color="#64748B">\t{page_map[key]}</font>'
+                )
+            else:
+                text = f'<link href="#{key}" color="#2563EB">{label}</link>'
+            rows.append([Paragraph(normalize_markup(text), ST["TOCEntry"])])
+            kinds.append("entry")
+    return rows, kinds
+
+
+def _style_toc_subtable(rows: list[list], kinds: list[str]) -> Table:
+    """Apply alternating entry backgrounds and dark part-header bars."""
+    tbl = Table(rows, colWidths=[CONTENT_W * 0.46])
+    commands = [
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]
+    entry_idx = 0
+    for i, kind in enumerate(kinds):
+        if kind == "part":
+            commands.extend(
+                [
+                    ("BACKGROUND", (0, i), (-1, i), TOC_PART_BG),
+                    ("TOPPADDING", (0, i), (-1, i), 5),
+                    ("BOTTOMPADDING", (0, i), (-1, i), 5),
+                    ("LEFTPADDING", (0, i), (-1, i), 8),
+                ]
+            )
+        else:
+            bg = ROW_BG if entry_idx % 2 else colors.white
+            if kind == "pad":
+                bg = colors.white
+            commands.extend(
+                [
+                    ("BACKGROUND", (0, i), (-1, i), bg),
+                    ("TOPPADDING", (0, i), (-1, i), 2),
+                    ("BOTTOMPADDING", (0, i), (-1, i), 2),
+                    ("LEFTPADDING", (0, i), (-1, i), 4),
+                ]
+            )
+            if kind == "entry":
+                entry_idx += 1
+    tbl.setStyle(TableStyle(commands))
+    return tbl
 
 
 def add_toc(story, page_map: dict[str, int] | None = None):
     story.append(P("Contents", "Section"))
-    story.append(Spacer(1, 8))
-    rows = []
-    for key, label in TOC_ENTRIES:
-        if page_map and key in page_map:
-            # Literal tab char — ReportLab ignores <tab/> markup; tabStops add dot leaders.
-            text = f'<link href="#{key}" color="#2563EB">{label}</link>\t{page_map[key]}'
-        else:
-            text = f'<link href="#{key}" color="#2563EB">{label}</link>'
-        rows.append([Paragraph(normalize_markup(text), ST["TOCEntry"])])
-    toc_table = Table(rows, colWidths=[CONTENT_W])
-    toc_table.setStyle(
+    story.append(Spacer(1, 6))
+    roadmap = Table(
+        [[P(
+            "<b>Reading paths</b> &mdash; "
+            "<b>Mechanism</b> Parts I&ndash;III &middot; "
+            "<b>Greek depth</b> Part IV &middot; "
+            "<b>Operations</b> &sect;20 &middot; "
+            "<b>Empirical check</b> Appendix B",
+            "TOCRoadmap",
+        )]],
+        colWidths=[CONTENT_W],
+    )
+    roadmap.setStyle(
         TableStyle(
             [
-                ("TOPPADDING", (0, 0), (-1, -1), 0),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("BACKGROUND", (0, 0), (-1, -1), TOC_ACCENT),
+                ("BOX", (0, 0), (-1, -1), 0.75, BLUE),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
             ]
         )
     )
-    story.append(toc_table)
+    story.append(roadmap)
+    story.append(Spacer(1, 10))
+
+    left_rows, left_kinds = _toc_column_rows(TOC_LEFT_GROUPS, page_map)
+    right_rows, right_kinds = _toc_column_rows(TOC_RIGHT_GROUPS, page_map)
+    pad = max(len(left_rows), len(right_rows)) - min(len(left_rows), len(right_rows))
+    if len(left_rows) < len(right_rows):
+        left_rows.extend([[P(" ", "TOCEntry")]] * pad)
+        left_kinds.extend(["pad"] * pad)
+    else:
+        right_rows.extend([[P(" ", "TOCEntry")]] * pad)
+        right_kinds.extend(["pad"] * pad)
+
+    left_tbl = _style_toc_subtable(left_rows, left_kinds)
+    right_tbl = _style_toc_subtable(right_rows, right_kinds)
+    outer = Table([[left_tbl, right_tbl]], colWidths=[CONTENT_W * 0.48, CONTENT_W * 0.48])
+    outer.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (0, 0), 8),
+                ("RIGHTPADDING", (1, 0), (1, 0), 0),
+            ]
+        )
+    )
+    story.append(outer)
+    story.append(PageBreak())
+
+
+def add_desk_reference(story):
+    """One-page desk checklist — rules, sizing, evidence, rule priority."""
+    section(story, "secDesk", "Desk Quick Reference", new_page=False)
+    story.append(
+        P(
+            "Condensed operational sheet for short-premium books. Full rationale in Sections 3, 8&ndash;9, 20, and Appendix B. "
+            "<b>Scope:</b> unhedged short put baseline; adapt for spreads/strangles per Section 5."
+        )
+    )
+    add_table(
+        story,
+        ["Layer", "Rule", "Trigger / action"],
+        [
+            ["Entry", "45 DTE (40&ndash;55 band)", "Weekly; avoid earnings unless defined risk"],
+            ["Entry", "IV Rank &gt; 50%", "Skip if IV elevated from tail event, not VRP"],
+            ["Entry", "OTM put S/K 1.05&ndash;1.15", "See &sect;20.3 decision matrix for peak DTE"],
+            ["Exit", "50% max profit", "Primary take-profit; hold only if stable VRP grind"],
+            ["Exit", "21 DTE floor", "Close/roll before gamma zone unless &gamma; still low"],
+            ["Exit", "DTE &lt; T*", "Recompute T* after large spot moves (&sect;3.1)"],
+            ["Risk", "Regime size cap", "See sizing table below; cut further if VIX &gt; 30"],
+        ],
+        col_widths=[0.12, 0.28, 0.60],
+        heading="Core Rule Stack (Section 20)",
+    )
+    add_table(
+        story,
+        ["When rules conflict", "Priority"],
+        [
+            ["VIX &gt; 30 vs profit target", "Size down / defined risk first; do not add"],
+            ["21 DTE vs 50% profit", "Whichever threshold is hit first"],
+            ["T* exit vs 50% profit", "T* if spot moved materially; else profit target"],
+            ["IV crush post-event vs hold", "Close 1&ndash;2 sessions post catalyst"],
+            ["Pilot vs MC tail story", "Trust Appendix B over &sect;21 until n &ge; 150"],
+        ],
+        col_widths=[0.42, 0.58],
+        heading="Rule Priority (when signals disagree)",
+    )
+    add_table(
+        story,
+        ["Regime (VIX)", "Max allocation", "Notes"],
+        [
+            ["Low (&lt; 15)", "3&ndash;5%", "Thin premium; diversify"],
+            ["Normal (15&ndash;20)", "2&ndash;3%", "Baseline"],
+            ["Elevated (20&ndash;30)", "1&ndash;2%", "Vega dominance risk"],
+            ["Crisis (&gt; 30)", "0.5&ndash;1%", "Defined risk only"],
+        ],
+        col_widths=[0.22, 0.18, 0.60],
+        heading="Regime Sizing (Section 20.4)",
+    )
+    add_table(
+        story,
+        ["Claim", "Confidence", "Desk takeaway"],
+        [
+            ["T* / decision matrix", "Robust", "See &sect;20.3 for peak DTE by moneyness &times; IV"],
+            ["45/50/21 conventions", "Model-contingent", "Reasonable defaults, not optima"],
+            ["50% mgmt cuts crisis tail", "MC only", f"Pilot n={_pilot_n()}: 5th %ile unchanged"],
+            ["Section 7 surface signals", "Not inferential", "Do not signal-trade"],
+        ],
+        col_widths=[0.34, 0.22, 0.44],
+        heading="Evidence Snapshot (Section 1)",
+    )
+    callout_box(
+        story,
+        "<b>Management edge unproven:</b> MC (&sect;21) suggests early exits cut crisis tails; "
+        f"Appendix B (n = {_pilot_n()}) does <b>not</b> confirm. Run rules as risk discipline, not proven edge.",
+        tone="warn",
+    )
     story.append(PageBreak())
 
 
@@ -777,34 +1129,65 @@ def build_section_2(story):
     subsection(story, "2.1 Notation")
     story.append(
         P(
-            "The following symbols are used throughout this report. All quantities are deterministic unless otherwise "
-            "noted. Time is in years unless converted explicitly; &sigma; is annualized."
+            "Symbols follow standard continuous-time option pricing (Black &amp; Scholes, 1973; Merton, 1976). "
+            "Calendar time is measured in years unless stated otherwise; &sigma; and all volatilities are "
+            "<b>annualized</b> (decimal, not percent). Partial derivatives use &part;; stochastic differentials use "
+            "It&ocirc; notation (dS, dW, dN)."
         )
     )
-    add_table(story,
-            ["Symbol", "Definition", "Units"],
-            [
-                ["S, S<sub>t</sub>", "Spot price at t", "$/share"],
-                ["K", "Strike", "Currency"],
-                ["T", "Time to expiry", "Years"],
-                ["r", "Risk-free rate", "Ann. decimal"],
-                ["&sigma;", "Implied vol (BS)", "Ann. decimal"],
-                ["&sigma;<sub>d</sub>", "Diffusion vol (Merton)", "Ann. decimal"],
-                ["&theta;(S,K,T,&sigma;,r)", "Theta &part;V/&part;T", "$/yr (÷365 daily)"],
-                ["&Gamma;(S,K,T,&sigma;,r)", "Gamma &part;&sup2;V/&part;S&sup2;", "1/$"],
-                ["&Delta;(S,K,T,&sigma;,r)", "Delta &part;V/&part;S", "Unitless"],
-                ["V", "Option value", "Currency"],
-                ["T*", "Time of max &theta; (OTM)", "Years"],
-                ["&phi;(&middot;)", "Standard normal PDF", "—"],
-                ["N(&middot;)", "Standard normal CDF", "—"],
-                ["d1, d2", "BS intermediates (Sec 3.1)", "—"],
-                ["&lambda;", "Jump intensity (Merton)", "Events/yr"],
-                ["&mu;<sub>j</sub>", "Mean log-jump size", "Unitless"],
-                ["&sigma;<sub>j</sub>", "Log-jump vol", "Unitless"],
-            ],
-            col_widths=[0.13, 0.52, 0.35],
+    add_table(
+        story,
+        ["Symbol", "Definition", "Units / domain"],
+        [
+            ["S, S<sub>t</sub>", "Spot price at t", "$/share"],
+            ["K", "Strike", "Currency"],
+            ["T, &tau;", "Calendar time to expiry (&tau; &equiv; T &minus; t)", "Years; DTE = 365&tau;"],
+            ["t", "Clock time since entry", "Years"],
+            ["r", "Risk-free rate (constant)", "Ann. decimal"],
+            ["&sigma;", "Implied vol (BS)", "Ann. decimal"],
+            ["&sigma;<sub>d</sub>", "Diffusion vol (Merton)", "Ann. decimal"],
+            ["V", "Long-option mark-to-market value", "Currency"],
+            ["&Pi;", "Short-position P&amp;L (seller)", "&Pi; = V<sub>entry</sub> &minus; V<sub>exit</sub>"],
+            ["&theta;", "Theta: &part;V/&part;T (calendar)", "$/yr; daily &asymp; &theta;/365"],
+            ["&Gamma;", "Gamma: &part;<super>2</super>V/&part;S<super>2</super>", "1/$"],
+            ["&Delta;", "Delta: &part;V/&part;S", "Unitless"],
+            ["&nu;", "Vega: &part;V/&part;&sigma;", "$ per 1 vol point*"],
+            ["&nu;<sub>mm</sub>, Vomma", "&part;<super>2</super>V/&part;&sigma;<super>2</super>", "$ per vol&sup2;"],
+            ["T*", "Time to expiry maximizing |&theta;| (OTM puts/calls)", "Years"],
+            ["d<sub>1</sub>, d<sub>2</sub>", "Black&ndash;Scholes indices (&sect;2.2)", "Unitless"],
+            ["&phi;, N", "Standard normal PDF / CDF", "&mdash;"],
+            ["&lambda;", "Poisson jump intensity (Merton)", "Events/yr"],
+            ["&mu;<sub>j</sub>, &sigma;<sub>j</sub>", "Log-jump mean / s.d.", "Unitless"],
+            ["E[&middot;], P(&middot;)", "Expectation / probability", "Under stated measure"],
+            ["q<sub>&alpha;</sub>", "&alpha;-quantile of a P&amp;L distribution", "Currency or %"],
+            ["CVaR<sub>&alpha;</sub>", "E[X | X &le; q<sub>&alpha;</sub>]", "Tail mean beyond q<sub>&alpha;</sub>"],
+        ],
+        col_widths=[0.15, 0.52, 0.33],
+        footnote="*1 vol point = 0.01 absolute (&sigma; = 0.25 &rarr; 25%). Tables may write &nu;&middot;&Delta;&sigma; as &ldquo;Vega&middot;d&sigma;.&rdquo;",
     )
-    subsection(story, "2.2 Underlying Price Dynamics")
+    subsection(story, "2.1.1 Sign and typographic conventions")
+    bullets(
+        story,
+        [
+            "<b>Short premium:</b> &theta; = &part;V/&part;T is typically negative for long-option marks; "
+            "the seller&rsquo;s daily carry is approximately <b>&minus;&theta;/365</b> (positive when the option decays).",
+            "<b>Log-moneyness:</b> (ln(S/K))<super>2</super> means the square of ln(S/K), not ln(S<super>2</super>/K).",
+            "<b>Approximations:</b> &asymp; denotes model approximation; &prop; proportional under stated limits.",
+            "<b>Simulation:</b> E[f(X)] is estimated by (1/N) &sum;<sub>i=1</sub><super>N</super> f(X<sub>i</sub>) unless bootstrap CIs are reported.",
+        ],
+    )
+    subsection(story, "2.2 Black&ndash;Scholes primitives")
+    story.append(P("Under constant (r, &sigma;) and no dividends, European put/call values satisfy:"))
+    formula_box(
+        story,
+        [
+            "d<sub>1</sub> = [ln(S/K) + (r + &frac12;&sigma;&sup2;)T] / (&sigma;&radic;T)",
+            "d<sub>2</sub> = d<sub>1</sub> &minus; &sigma;&radic;T",
+            "&theta; = &part;V/&part;T,   &Gamma; = &part;<super>2</super>V/&part;S<super>2</super>,   &nu; = &part;V/&part;&sigma;,   &Delta; = &part;V/&part;S",
+        ],
+    )
+    source(story, "Derived] Standard BS PDE; see Emery, Guo &amp; Su (2008) for OTM theta peaks")
+    subsection(story, "2.3 Underlying price dynamics")
     story.append(P("<b>Diffusion model (Black-Scholes).</b> The underlying follows geometric Brownian motion under the risk-neutral measure Q:"))
     formula_box(story, ["dS<sub>t</sub> = r &middot; S<sub>t</sub> &middot; dt + &sigma; &middot; S<sub>t</sub> &middot; dW<sub>t</sub>"])
     bullets(story, [
@@ -815,46 +1198,47 @@ def build_section_2(story):
     formula_box(story, ["dS<sub>t</sub> / S<sub>t</sub> = (r &ndash; &lambda;E[J]) dt + &sigma;<sub>d</sub> &middot; dW<sub>t</sub> + J &middot; dN<sub>t</sub>"])
     bullets(story, [
         "N<sub>t</sub> is a Poisson process with intensity &lambda; (jumps/year)",
-        "ln(1 + J) ~ Normal(&mu;<sub>j</sub>, &sigma;<sub>j</sub>&sup2;)",
-        "E[J] = exp(&mu;<sub>j</sub> + &frac12;&sigma;<sub>j</sub>&sup2;) &ndash; 1  (drift compensation)",
+        "ln(1 + J) &sim; N(&mu;<sub>j</sub>, &sigma;<sub>j</sub>&sup2;)",
+        "E[J] = exp(&mu;<sub>j</sub> + &frac12;&sigma;<sub>j</sub>&sup2;) &minus; 1  (drift compensation)",
     ])
-    subsection(story, "2.3 Key Definitions")
-    story.append(P("<b>P&amp;L.</b> For a short option position entered at time 0 and closed at time t &le; T:"))
-    formula_box(story, ["PnL(t) = V(S<sub>0</sub>, K, T, &sigma;, r) &ndash; V(S<sub>t</sub>, K, T&ndash;t, &sigma;, r)"])
-    story.append(P("For hold-to-expiry: PnL = Premium &ndash; max(K &ndash; S<sub>t</sub>, 0) [put]"))
+    subsection(story, "2.4 Key definitions")
+    story.append(P("<b>Short-position P&amp;L.</b> For a short option entered at t = 0 and closed at t &le; T:"))
+    formula_box(story, ["&Pi;(t) = V(S<sub>0</sub>, K, T, &sigma;, r) &minus; V(S<sub>t</sub>, K, T &minus; t, &sigma;, r)"])
+    story.append(P("Hold-to-expiry put: &Pi; = Premium &minus; max(K &minus; S<sub>T</sub>, 0)."))
     story.append(
         P(
-            "<b>Expectation and probability.</b> E[X] denotes expectation under the simulation measure. "
-            "P(X &le; x) denotes the cumulative distribution. CVaR at level &alpha; = E[X | X &le; q<sub>&alpha;</sub>] "
-            "where q<sub>&alpha;</sub> is the &alpha;-quantile."
+            "<b>Expectation and tail risk.</b> E[X] is under the simulation or empirical measure stated in context. "
+            "Monte Carlo estimates use the sample mean (1/N) &sum;<sub>i=1</sub><super>N</super> f(X<sub>i</sub>) unless bootstrap CIs are reported. "
+            "CVaR<sub>&alpha;</sub> = E[X | X &le; q<sub>&alpha;</sub>] where q<sub>&alpha;</sub> is the &alpha;-quantile."
         )
     )
     story.append(
         P(
-            "<b>Loss clustering.</b> Given a binary loss sequence X<sub>t</sub> = 1{PnL<sub>t</sub> &lt; 0}, a loss cluster is a "
-            "maximal run of consecutive 1s. Cluster length L<sub>k</sub> is the length of the k-th cluster."
+            "<b>Loss clustering.</b> Indicator X<sub>t</sub> = 1{&Pi;<sub>t</sub> &lt; 0}; a loss cluster is a maximal run of consecutive ones; "
+            "L<sub>k</sub> is the length of the k-th cluster."
         )
     )
     story.append(
         P(
-            "<b>T* approximation regime.</b> The expression T* &asymp; ln&sup2;(S/K) / &sigma;&sup2; is derived by setting "
-            "&part;&theta;/&part;T = 0 under the BS model with r = 0. For the OTM, short-dated focus of this report "
-            "(T &lt; 0.25 years, r &le; 8%), the error is below 5% of the exact peak DTE."
+            "<b>T* (OTM peak theta).</b> With r = 0 and fixed (S, K, &sigma;), setting &part;&theta;/&part;T = 0 yields "
+            "T* &asymp; (ln(S/K))<super>2</super> / &sigma;<super>2</super>. For r &le; 8% and T &lt; 0.25y the calendar-time error "
+            "in T* is below 5% of the exact optimum (numerically verified)."
         )
     )
-    source(story, "Derived] Approximation bounds verified numerically across r = 0&ndash;8%, T = 0&ndash;0.5y")
-    add_table(story,
-            ["Assumption", "Specification", "Impact if Violated"],
-            [
-                ["Returns distribution", "Log-normal (BS) or log-normal + Poisson jumps (Merton)", "Heavier tails than modeled; tail metrics are optimistic"],
-                ["Independence", "Returns are i.i.d. across time steps within each path", "Autocorrelation would increase clustering beyond reported levels"],
-                ["Constant IV", "Implied vol fixed during trade; no stochastic vol", "IV path dependency adds P&amp;L variance not captured"],
-                ["Stationarity", "Parameters constant within each regime block", "Regime transitions mid-trade are not modeled"],
-                ["No friction dynamics", "Spreads and liquidity constant; no margin calls", "Stress-period widening creates additional losses not captured"],
-            ],
-            col_widths=[0.22, 0.38, 0.40],
-            footnote="These assumptions collectively create an optimistic bias in simulated results relative to live trading.",
-            heading="2.4 Simulation Assumptions",
+    source(story, "Derived] T* approximation; Emery, Guo &amp; Su (2008)")
+    add_table(
+        story,
+        ["Assumption", "Specification", "Impact if violated"],
+        [
+            ["Returns distribution", "Log-normal (BS) or log-normal + Poisson jumps (Merton)", "Heavier tails than modeled; tail metrics optimistic"],
+            ["Independence", "Daily increments i.i.d. within each simulated path", "Autocorrelation increases loss clustering"],
+            ["Constant IV", "Implied vol fixed along path (unless &sect;17 noted)", "Stoch-vol adds P&amp;L variance"],
+            ["Stationarity", "Parameters constant within each regime block", "Mid-trade regime shifts not modeled"],
+            ["Friction", "Static spreads; no margin calls", "Stress widening adds losses"],
+        ],
+        col_widths=[0.22, 0.38, 0.40],
+        footnote="Collectively optimistic for unhedged short premium under BS MC.",
+        heading="2.5 Simulation assumptions",
     )
 
 
@@ -864,7 +1248,7 @@ def build_section_3(story):
         P(
             "BS theta decomposes into a volatility/gamma term (always negative, maximal near ATM) and a carry term "
             "(partially offsetting for puts, reinforcing for calls). Theta is a function of five variables: "
-            "&theta; = &theta;(S, K, T, &sigma;, r). For short sellers, daily income = &ndash;&theta;/365."
+            "&theta; = &theta;(S, K, T, &sigma;, r). For a short position, daily carry &asymp; &minus;&theta;/365 when &theta; = &part;V/&part;T."
         )
     )
     subsection(story, "3.1 The OTM Theta Peak")
@@ -876,7 +1260,7 @@ def build_section_3(story):
     formula_box(
         story,
         [
-            "T*  &asymp;  ln&sup2;(S/K) / &sigma;&sup2;",
+            "T*  &asymp;  (ln(S/K))<super>2</super> / &sigma;<super>2</super>",
             "Doubling distance from ATM  &rarr;  peak shifts 4&times; earlier",
             "Doubling IV  &rarr;  peak shifts 4&times; later",
             "At ATM (S = K):  T* = 0, peaks at expiry",
@@ -895,15 +1279,15 @@ def build_section_3(story):
             "Theta does not operate in isolation. The instantaneous change in option value is the sum of contributions from all Greeks:"
         )
     )
-    formula_box(story, ["dV  &asymp;  &Delta;&middot;dS  +  &frac12;&Gamma;&middot;dS&sup2;  +  Vega&middot;d&sigma;  +  &theta;&middot;dt  +  &rho;&middot;dr"])
+    formula_box(story, ["&part;V  &asymp;  &Delta;&middot;dS  +  &frac12;&Gamma;&middot;(dS)<super>2</super>  +  &nu;&middot;d&sigma;  +  &theta;&middot;dt  +  &rho;&middot;dr"])
     add_table(story,
             ["Term", "Greek", "Meaning", "Impact on Short Premium"],
             [
                 ["&Delta;&middot;dS", "Delta", "Directional exposure to underlying movement", "Loss if spot moves against position"],
-                ["&frac12;&Gamma;&middot;dS&sup2;", "Gamma", "Convexity: sensitivity of delta to spot moves", "Always negative for short options; amplifies losses"],
-                ["Vega&middot;d&sigma;", "Vega", "Exposure to changes in implied volatility", "Short premium is short vega; IV spikes cause losses discontinuously"],
-                ["&theta;&middot;dt", "Theta", "Time decay; this report&rsquo;s primary focus", "Positive for short premium; only Greek that reliably favors the seller"],
-                ["&rho;&middot;dr", "Rho", "Interest rate sensitivity", "Small for short-dated; material &gt; 90 DTE"],
+                ["&frac12;&Gamma;&middot;(dS)<super>2</super>", "Gamma", "Convexity: sensitivity of delta to spot moves", "Always negative for short options; amplifies losses"],
+                ["&nu;&middot;d&sigma;", "Vega (&nu; = &part;V/&part;&sigma;)", "Exposure to changes in implied volatility", "Short premium is short vega; IV spikes cause discontinuous losses"],
+                ["&theta;&middot;dt", "Theta (&part;V/&part;T)", "Calendar time decay of option mark", "Positive carry for seller when &theta; &lt; 0"],
+                ["&rho;&middot;dr", "Rho (&part;V/&part;r)", "Interest rate sensitivity", "Small for short-dated; material &gt; 90 DTE"],
             ],
             col_widths=[0.12, 0.10, 0.34, 0.44],
     )
@@ -1218,7 +1602,15 @@ def build_section_7(story):
             col_widths=[0.30, 0.14, 0.56],
             footnote="Regimes by ATM vol vs trailing median. Crash signal = skew + term structure.",
     )
-    subsection(story, "7.4 Implications and Limitations")
+    subsection(story, "7.4 Implications and limitations")
+    story.append(
+        P(
+            "<b>Statistical status:</b> With vol/skew activations at n = 3, no stable estimate of conditional mean "
+            "forward return is possible; binomial CIs for hit rates would span nearly [0, 1]. Term-inversion cells "
+            "(n = 64 vs 12) are unbalanced and were not tested with formal multiple-comparison control. "
+            "Treat all directional statements as <b>hypothesis-generating</b>, not confirmatory inference."
+        )
+    )
     story.append(
         P(
             "The directional patterns are economically interpretable, but statistical limitations are severe&mdash;vol spike and "
@@ -1252,7 +1644,10 @@ def build_section_8(story):
     fig_block(
         story,
         "fig_regime",
-        "Figure 12: OTM short put (S/K = 1.11) theta across four regimes. Shading: 25th&ndash;75th percentile bands. 1,500 paths each.",
+        mc_caption(
+            "Figure 12: OTM short put (S/K = 1.11) theta across four regimes. "
+            "Shading: 25th&ndash;75th percentile bands. 1,500 paths each."
+        ),
     )
     story.append(
         P(
@@ -1315,7 +1710,9 @@ def build_section_10(story):
         lead="Distribution-level metrics compare tail risk, clustering, and recovery across structure types.",
         opening=_fig_flowables(
             "fig_risk",
-            "Figure 14: Theta&ndash;risk frontier by moneyness. Each dot = one S/K level. 45 DTE, &sigma; = 30%, 5,000 paths.",
+            mc_caption(
+                "Figure 14: Theta&ndash;risk frontier by moneyness. Each dot = one S/K level. 45 DTE, &sigma; = 30%, 5,000 paths."
+            ),
         ),
     )
     story.append(
@@ -1327,7 +1724,9 @@ def build_section_10(story):
     fig_block(
         story,
         "fig_risk_equity",
-        "Figure E: Equity curves (left) and drawdown paths (right). Solid = hold-to-expiry, dashed = managed.",
+        mc_caption(
+            "Figure E: Equity curves (left) and drawdown paths (right). Solid = hold-to-expiry, dashed = managed."
+        ),
         title="10.1 Distribution-Level Risk Metrics",
         lead="Single-trade averages obscure loss distribution shape. This section compares max drawdown, loss clustering, "
         "CVaR, and recovery time across CSP, strangle, and credit spread (200 trades each, IV = 25%, RV = 18%).",
@@ -1360,8 +1759,12 @@ def build_section_10(story):
             footnote="Max Recovery = trades to recover from worst drawdown.",
             heading="Recovery &amp; Clustering Metrics",
     )
-    fig_block(story, "fig_risk_clustering", "Figure F: Loss clustering by structure (small multiples).")
-    fig_block(story, "fig_risk_boxplots", "Figure G: P&amp;L distribution box plots by structure. All strategies show negative skew.")
+    fig_block(story, "fig_risk_clustering", mc_caption("Figure F: Loss clustering by structure (small multiples)."))
+    fig_block(
+        story,
+        "fig_risk_boxplots",
+        mc_caption("Figure G: P&amp;L distribution box plots by structure. All strategies show negative skew."),
+    )
     add_table(story,
             ["Regime", "Structure", "Avg Cluster", "Max Cluster", "5th %ile", "CVaR 5%"],
             [
@@ -1432,7 +1835,7 @@ def build_section_11(story):
 
 
 def build_section_12(story):
-    section(story, "sec12", "12. Rule Sensitivity &amp; Benchmarks (Simulated)")
+    section(story, "sec12", "12. Parameter Sweeps &amp; Benchmarks")
     story.append(
         P(
             "Trade rules in premium-selling are often conventions without formal optimization. "
@@ -1445,19 +1848,23 @@ def build_section_12(story):
     fig_block(
         story,
         "fig_sweep",
-        "Figure 16: Sharpe and win rate across DTE entries and profit targets. 400 paths/cell, OTM put S/K = 1.05.",
+        mc_caption(
+            "Figure 16: Sharpe and win rate across DTE entries and profit targets. 400 paths/cell, OTM put S/K = 1.05."
+        ),
         title="12.1 DTE &times; Profit Target Sweep",
     )
     story.append(
         P(
             "The 45 DTE entry is competitive but not uniquely optimal&mdash;the 40&ndash;55 DTE range tends to produce similar Sharpe ratios. "
-            "Takeaway: The 45 DTE / 50% profit rule is a reasonable default, not a proven optimum."
+            "Takeaway: The 45 DTE / 50% profit rule is a reasonable default, not a proven optimum. "
+            "<i>Exploratory grid:</i> Figure 16 is Monte Carlo only; an initial chain-based entry-DTE slice appears in Appendix B.3&mdash;"
+            "not a replacement for this simulation sweep."
         )
     )
     fig_block(
         story,
         "fig_dte_ci",
-        "Figure C: Sharpe ratio by entry DTE with 80% bootstrap confidence interval.",
+        mc_caption("Figure C: Sharpe ratio by entry DTE with 80% bootstrap confidence interval."),
         title="12.2 DTE Selection with Confidence Intervals",
     )
     story.append(
@@ -1470,14 +1877,16 @@ def build_section_12(story):
     fig_block(
         story,
         "fig_sensitivity",
-        "Figure 17: How total theta and front-loading change with IV, moneyness, and costs.",
+        mc_caption("Figure 17: How total theta and front-loading change with IV, moneyness, and costs."),
         title="12.3 Sensitivity Analysis",
     )
     story.append(P("Total theta is roughly linear in IV but nonlinear in moneyness. Front-loading increases with both."))
     fig_block(
         story,
         "fig_bench_norm",
-        "Figure 18: Equal-margin benchmark. $5,000 margin budget, IV = 25%, RV = 18%, 500 cycles.",
+        mc_caption(
+            "Figure 18: Equal-margin benchmark. $5,000 margin budget, IV = 25%, RV = 18%, 500 cycles."
+        ),
         title="12.4 Normalized Benchmark Comparison",
     )
     add_table(story,
@@ -1517,6 +1926,14 @@ def build_section_20(story):
         "Greek interaction system. This section translates that machinery into operational rules for <b>unhedged</b> "
         "short premium positions.",
         opening=([P("20.1 Entry Rules", "Subsection"), *tbl_20_1], 0.42 * inch + est_20_1),
+    )
+    callout_box(
+        story,
+        "<b>50% profit management:</b> Supported as practitioner convention and in Monte Carlo (&sect;12, &sect;21) "
+        f"&mdash; <b>not confirmed</b> on real SPY chains (Appendix B, n = {_pilot_n()}). "
+        f"Managed and hold share the same 5th-percentile P&amp;L ({_pilot_p05()}/contract) in the pilot. Use rules for risk discipline; "
+        "do not assume a proven edge from early exits.",
+        tone="warn",
     )
     story.append(
         P(
@@ -1617,14 +2034,14 @@ def build_section_22(story):
     section(
         story,
         "sec22",
-        "22. Master Reference: Key Relationships",
+        "22. Key Relationships (Reference)",
         lead="Consolidated index of findings across Sections 1&ndash;23. "
         "<b>Robust</b> = analytically derived; <b>Tentative</b> = simulation-supported; "
         "<b>Model-contingent</b> = depends on model or convention choices.",
         opening=_table_flowables(
             ["#", "Finding", "Source", "Confidence", "Summary"],
             [
-                ["1", "T* peak timing", "[Derived]", "Robust", "T* &asymp; ln&sup2;(S/K)/&sigma;&sup2;. ATM at expiry; OTM earlier."],
+                ["1", "T* peak timing", "[Derived]", "Robust", "T* &asymp; (ln(S/K))<super>2</super>/&sigma;<super>2</super>. ATM at expiry; OTM earlier."],
                 ["2", "Moneyness effect", "[Derived]", "Robust", "ATM&rarr;OTM shifts peak earlier. Quadratic."],
                 ["3", "IV effect", "[Derived]", "Robust", "Higher IV delays OTM peak, increases magnitude."],
                 ["4", "IV shock asymmetry", "[Derived]", "Robust", "OTM: structural shift. ATM: magnitude only."],
@@ -1648,7 +2065,7 @@ def build_section_22(story):
                 ["15", "Variance identity", "[Derived]", "Robust", "P&amp;L<sub>&gamma;</sub> &prop; &sigma;&sup2;<sub>real</sub> &minus; &sigma;&sup2;<sub>impl</sub> (Sec. 14)."],
                 ["16", "Hedging tradeoff", "[Calibrated]", "Tentative", "Delta hedge removes direction; gamma/vega remain (Sec. 16)."],
                 ["17", "Surface dynamics", "[Calibrated]", "Tentative", "Sticky delta amplifies vega loss on spot drops (Sec. 17)."],
-                ["18", "Model risk", "[Calibrated]", "Model-contingent", "Merton/stoch-vol shift T* and peak θ (Sec. 18)."],
+                ["18", "Model risk", "[Calibrated]", "Model-contingent", "Merton/stoch-vol shift T* and peak &theta; (Sec. 18)."],
                 ["19", "Execution drag", "[Calibrated]", "Tentative", "OTM spreads wider; stress multiplies costs (Sec. 19)."],
                 ["20", "Section 20 rules (pilot)", "[Calibrated]", "Pilot only", f"SPY chain n={_pilot_n()}; wide CIs; MC tail benefit not replicated."],
             ],
@@ -1672,16 +2089,22 @@ def build_section_21(story):
         story,
         "sec21",
         "21. Monte Carlo Scenario Analysis",
-        lead="Stress-tests the Section 20 management rules across four calibrated regimes. Crisis scenarios "
-        "understate tail risk relative to sticky-delta surface dynamics (Section 17) and stress-period execution "
-        "(Section 19).",
+        lead="Stress-tests Section 20 management rules under four calibrated regimes. "
+        "<b>Read Appendix B first</b> for what the chain pilot supports before interpreting tail-benefit claims below.",
+    )
+    callout_box(
+        story,
+        f"<b>Pilot first (Appendix B, n = {_pilot_n()}):</b> Managed and hold strategies share the same "
+        f"5th-percentile net P&amp;L ({_pilot_p05()}/contract). The Monte Carlo tail-benefit narrative "
+        "in this section is <b>not replicated</b> on real SPY chains at current sample size.",
+        tone="warn",
     )
     story.append(
         P(
             "Monte Carlo parameters approximate historical market regimes. These are <b>simulations</b>&mdash;"
             "not historical backtests&mdash;with parameters chosen to reflect each regime's characteristics. "
-            f"A complementary <b>pilot</b> historical test on real SPY chains (Appendix B, n = {_pilot_n()} weekly entries) "
-            "partially addresses the validation gap but is not yet sufficient to replace Figure D or the scenario table below. "
+            f"The complementary chain pilot (Appendix B) partially addresses the validation gap but is not yet "
+            "sufficient to replace Figure D or the scenario table below. "
             "All scenarios model <b>unhedged</b> hold vs managed strategies; hedged overlays (Section 16) are a natural extension."
         )
     )
@@ -1699,7 +2122,9 @@ def build_section_21(story):
     fig_block(
         story,
         "fig_cases",
-        "Figure D: Cumulative P&amp;L distributions (CDF) for hold-to-expiry vs managed strategies across simulated regimes.",
+        mc_caption(
+            "Figure D: Cumulative P&amp;L distributions (CDF) for hold-to-expiry vs managed strategies across simulated regimes."
+        ),
     )
     add_table(story,
             ["Regime", "Strategy", "Median", "5th %ile", "P(Loss)"],
@@ -1736,8 +2161,7 @@ def build_section_21(story):
             "crash scenarios, managed strategies tend to cut 5th percentile losses by approximately half. The bear grind "
             "shows minimal difference. "
             f"<b>Appendix B does not confirm the tail benefit:</b> with n = {_pilot_n()} paired entries, managed and hold share the "
-            "same 5th percentile (&asymp; &minus;$56/contract), and Mar 2020 crisis cells show no managed advantage on "
-            "median P&amp;L. Treat §21 as a stress narrative under fixed model assumptions until a larger chain sample "
+            f"same 5th percentile ({_pilot_p05()}/contract). {_pilot_paired_note()} Treat &sect;21 as a stress narrative under fixed model assumptions until a larger chain sample "
             "is available (Future Work)."
         )
     )
@@ -1762,8 +2186,8 @@ def build_section_23(story):
     formula_box(
         story,
         [
-            "dV  &asymp;  &Delta;&middot;dS  +  &frac12;&Gamma;&middot;dS&sup2;  +  Vega&middot;d&sigma;  +  &theta;&middot;dt  +  cross terms (Vanna, Vomma, Charm)",
-            "Short premium = long &theta; + short &Gamma; + short Vega &minus; VRP harvest &minus; costs &minus; tail events",
+            "dV  &asymp;  &Delta;&middot;dS  +  &frac12;&Gamma;&middot;(dS)<super>2</super>  +  &nu;&middot;d&sigma;  +  &theta;&middot;dt  +  cross terms (Vanna, Vomma, Charm)",
+            "Short premium = long &theta; + short &Gamma; + short &nu; &minus; VRP harvest &minus; costs &minus; tail events",
         ],
     )
     subsection(story, "23.1 Layered Framework", opening=_table_flowables(
@@ -1830,10 +2254,10 @@ def build_section_13(story):
         story,
         ["Greek", "Definition", "Primary Role", "Short Premium Impact"],
         [
-            ["Vomma", "d&sup2;V/d&sigma;&sup2;", "Convexity of value in IV", "IV spikes hurt more when vomma is large (short vega becomes more short)"],
-            ["Vanna", "d&sup2;V/dS d&sigma;", "Delta response to vol; vega response to spot", "Spot moves re-rate delta during vol events; hedges drift"],
-            ["Charm", "d&Delta;/dt", "Delta decay over time", "Unhedged delta creeps toward expiry; roll timing affects residual exposure"],
-            ["Speed", "d&Gamma;/dS", "Gamma response to spot", "Near ATM, small spot moves rapidly change gamma (pin risk)"],
+            ["Vomma", "&part;<super>2</super>V/&part;&sigma;<super>2</super>", "Convexity of value in IV", "IV spikes hurt more when vomma is large (short vega becomes more short)"],
+            ["Vanna", "&part;<super>2</super>V/(&part;S&part;&sigma;)", "Delta response to vol; vega response to spot", "Spot moves re-rate delta during vol events; hedges drift"],
+            ["Charm", "&part;&Delta;/&part;t", "Delta decay over calendar time", "Unhedged delta creeps toward expiry; roll timing affects residual exposure"],
+            ["Speed", "&part;&Gamma;/&part;S", "Gamma response to spot", "Near ATM, small spot moves rapidly change gamma (pin risk)"],
         ],
         col_widths=[0.10, 0.16, 0.30, 0.44],
     )
@@ -1859,8 +2283,8 @@ def build_section_13(story):
     formula_box(
         story,
         [
-            "Vomma = Vega &middot; d1 &middot; d2 / &sigma;",
-            "Short premium: negative vega &times; positive vomma (OTM) &rarr; convex loss in IV",
+            "Vomma = &nu; &middot; d<sub>1</sub> &middot; d<sub>2</sub> / &sigma;",
+            "Short premium: negative &nu; &times; positive vomma (OTM) &rarr; convex loss in IV",
         ],
     )
     subsection(story, "13.3 Vanna and Cross-Greek Interaction")
@@ -1918,8 +2342,10 @@ def build_section_14(story):
     fig_block(
         story,
         "fig_var_premium",
-        "Figure 21: Median gamma P&amp;L over 30 days for an ATM short put (&sigma;<sub>implied</sub> = 25%). "
-        "Bars left of implied vol are favorable; bars right are unfavorable. Theta income is excluded to isolate the variance channel.",
+        mc_caption(
+            "Figure 21: Median gamma P&amp;L over 30 days for an ATM short put (&sigma;<sub>implied</sub> = 25%). "
+            "Bars left of implied vol are favorable; bars right are unfavorable. Theta income is excluded to isolate the variance channel."
+        ),
         title="14.2 Simulation Evidence",
         lead="Monte Carlo paths at fixed implied vol isolate gamma P&amp;L by realized vol level. The crossover at "
         "implied vol confirms the structural identity: premium selling is a bet on realized variance falling short of "
@@ -1940,7 +2366,7 @@ def build_section_14(story):
         [
             ["&theta;&middot;dt", "Time passes; spot stable", "Low-vol, post-T* carry phases"],
             ["&frac12;&Gamma;&middot;dS&sup2;", "Realized vol &lt; implied vol", "Calm paths; low RV environments"],
-            ["Vega&middot;d&sigma;", "IV contracts", "Vol mean-reversion after spikes"],
+            ["&nu;&middot;d&sigma;", "IV contracts", "Vol mean-reversion after spikes"],
             ["Vomma / Vanna", "N/A (always convex/cross risk)", "Vol shocks with spot gaps (Section 13)"],
         ],
         col_widths=[0.18, 0.38, 0.44],
@@ -2306,14 +2732,35 @@ def build_appendix(story):
             0.45 * inch,
         ),
     )
-    subsection(story, "A.5 Variance Risk Premium")
+    subsection(story, "A.5 Statistical estimators")
+    story.append(
+        P(
+            "Monte Carlo summaries use path-level or trade-level sample means unless noted. Sharpe ratios in "
+            "Section 12 are <b>simulated</b> annualized ratios SR = &radic;252 &middot; (&mu;/&sigma;) computed from "
+            "per-period P&amp;L (daily or per-trade, as stated in figure captions), not from live returns."
+        )
+    )
+    add_table(
+        story,
+        ["Quantity", "Estimator", "CI / notes"],
+        [
+            ["MC mean / quantile", "(1/N) &sum; X<sub>i</sub>; empirical q<sub>&alpha;</sub>", "No SE unless bootstrap row applies"],
+            ["DTE Sharpe curve (&sect;12.2)", "SR by entry DTE from simulated trades", "80% bootstrap percentile CI; B = 100 resamples per DTE"],
+            ["Pilot median P&amp;L (App. B)", "Sample median of net P&amp;L", "95% bootstrap percentile CI; B = 10,000 resamples"],
+            ["Pilot paired diff.", "Median(managed &minus; hold) by entry week", "95% CI; paired structure preserved in resample"],
+            ["DTE &times; profit grid (&sect;12.1)", "SR per cell (400 paths)", "Exploratory; no FDR / holdout correction"],
+        ],
+        col_widths=[0.22, 0.40, 0.38],
+        footnote="Percentile bootstrap: resample with replacement, recompute statistic, take &alpha;/2 and 1&minus;&alpha;/2 quantiles of the bootstrap distribution.",
+    )
+    subsection(story, "A.6 Variance Risk Premium")
     story.append(
         P(
             "Default VRP is IV = 25%, RV = 18%, representing a 7-percentage-point premium. "
             "Results are sensitive to VRP magnitude."
         )
     )
-    subsection(story, "A.6 Limitations")
+    subsection(story, "A.7 Limitations")
     story.append(
         P(
             "Simulations assume constant implied volatility (unless noted in Section 17), no bid-ask widening during stress "
@@ -2326,6 +2773,13 @@ def build_appendix(story):
 
 def build_appendix_b(story):
     v6 = load_v6_summary()
+    chain_scope = v6.get("chain_scope", {}) if v6 else {}
+    sessions_detail = "See chain_eod.parquet (run build_chain_eod.py)"
+    if chain_scope:
+        sessions_detail = (
+            f"{chain_scope.get('n_sessions', 'n/a')} chain sessions "
+            f"({chain_scope.get('date_start', '?')} to {chain_scope.get('date_end', '?')})"
+        )
     section(
         story,
         "secB",
@@ -2335,7 +2789,7 @@ def build_appendix_b(story):
     )
     story.append(
         P(
-            "This appendix documents what could be validated with available data as of v6.1. It does not upgrade "
+            "This appendix documents what could be validated with available data as of v6.4. It does not upgrade "
             "simulation-supported findings to empirical certainty. Section 7 surface signals are out of scope."
         )
     )
@@ -2353,7 +2807,7 @@ def build_appendix_b(story):
             ["Dataset", "Databento OPRA.PILLAR, parent symbol SPY.OPT"],
             ["Schemas", "definition, statistics, cbbo-1m (EOD NBBO marks)"],
             ["Months", "Mar 2020; Jan/Mar/Jun/Aug/Oct 2022; Jan/Mar 2023 (8 non-contiguous blocks)"],
-            ["Sessions", "84 trading days across four non-contiguous blocks"],
+            ["Sessions", sessions_detail],
             ["Underlying / VIX", "SPY close (Yahoo); VIXCLS (FRED) for regime tags"],
             ["Cost", "~$50 historical platform fees (four monthly pulls)"],
         ],
@@ -2369,21 +2823,14 @@ def build_appendix_b(story):
             ["Moneyness", "S/K &isin; [1.05, 1.15]", "Section 12.4 / spec"],
             ["Profit exit", "50% of entry premium", "Section 20.2"],
             ["Time exit", "DTE &le; 21", "Section 20.2"],
-            ["Benchmark", "Hold to last mark in sample", "Section 21"],
+            ["Benchmark", "Hold to expiry or chain end (data_end / data_gap)", "Section 21"],
             ["Costs", "Half-spread at entry/exit + $0.65/leg commission", "Section 9"],
         ],
         col_widths=[0.22, 0.38, 0.40],
     )
     if v6:
         dr = v6["date_range"]
-        bs = v6["by_strategy"]
-        hold = bs["hold"]
-        mgd = bs["managed"]
         subsection(story, "B.3 Results Summary")
-        med_h = hold.get("median_pnl_net_ci", {})
-        med_m = mgd.get("median_pnl_net_ci", {})
-        p05_h = hold.get("p05_pnl_net_ci", {})
-        p05_m = mgd.get("p05_pnl_net_ci", {})
         story.append(
             P(
                 f"<b>{v6['n_entries']} weekly entries</b> ({v6['n_trades']} trade rows including managed/hold pairs), "
@@ -2391,62 +2838,126 @@ def build_appendix_b(story):
                 "Sharpe ratios are unstable. Phase 1 acceptance target remains &ge;150 entries (Future Work)."
             )
         )
-        add_table(
-            story,
-            ["Strategy", "n", "Median net P&amp;L", "5th %ile", "95th %ile", "Win %"],
-            [
-                [
-                    "Hold",
-                    str(hold["count"]),
-                    _usd(hold["median_pnl_net"]) + _ci_band(med_h),
-                    _usd(hold["p05_pnl_net"]) + _ci_band(p05_h),
-                    _usd(hold["p95_pnl_net"]),
-                    _pct100(hold["win_rate"]),
-                ],
-                [
-                    "Managed",
-                    str(mgd["count"]),
-                    _usd(mgd["median_pnl_net"]) + _ci_band(med_m),
-                    _usd(mgd["p05_pnl_net"]) + _ci_band(p05_m),
-                    _usd(mgd["p95_pnl_net"]),
-                    _pct100(mgd["win_rate"]),
-                ],
-            ],
-            col_widths=[0.14, 0.06, 0.28, 0.22, 0.14, 0.10],
-            footnote="95% CIs from 10,000 bootstrap resamples of trade-level P&amp;L. Pilot sample; not inferential.",
-        )
+        _append_pilot_results_table(story, v6, heading="Primary (all entries)")
         diff = v6.get("managed_minus_hold", {})
         if diff:
-            dci = diff.get("median_diff_ci", {})
             story.append(
                 P(
-                    f"<b>Managed &minus; hold (paired):</b> median {_usd(diff.get('median_diff'))} per contract"
-                    f"{_ci_band(dci)} across {diff.get('count', 0)} entry weeks. "
-                    "A positive median favors management on this sample; overlapping CIs with zero imply no significant edge."
+                    "A positive paired median favors management on this sample; overlapping CIs with zero imply no significant edge."
                 )
             )
+
+        censor = v6.get("censoring", {})
+        exit_counts = v6.get("exit_reason_counts", {})
+        if censor or exit_counts:
+            subsection(story, "B.3.1 Exit Reasons and Censoring")
+            story.append(
+                P(
+                    "v6.4 labels forced closes explicitly: <i>data_end</i> when the chain ends before a rule exit; "
+                    "<i>data_gap</i> when calendar gaps exceed five days between consecutive marks on the same contract. "
+                    "These are pilot censoring events, not strategy exits."
+                )
+            )
+            if exit_counts.get("managed"):
+                mgd_exits = exit_counts["managed"]
+                hold_exits = exit_counts.get("hold", {})
+                reasons = sorted(set(mgd_exits) | set(hold_exits))
+                exit_rows = [
+                    [reason, str(mgd_exits.get(reason, 0)), str(hold_exits.get(reason, 0))]
+                    for reason in reasons
+                ]
+                add_table(
+                    story,
+                    ["Exit reason", "Managed n", "Hold n"],
+                    exit_rows,
+                    col_widths=[0.34, 0.33, 0.33],
+                    footnote="Managed exits include profit_50 and dte_21 rule hits; hold exits include expiry.",
+                )
+            if censor:
+                story.append(
+                    P(
+                        f"<b>Censored managed exits:</b> {censor.get('n_censored_managed', 0)} of "
+                        f"{censor.get('n_managed', 0)} ({100 * censor.get('pct_censored', 0):.0f}%) closed as "
+                        "data_end or data_gap. Sensitivity below drops those rows."
+                    )
+                )
+            excl = v6.get("summary_excluding_censored", {})
+            if excl.get("n_trades"):
+                _append_pilot_results_table(
+                    story,
+                    excl,
+                    heading=f"Sensitivity: excluding censored (n = {excl.get('n_entries', 0)} entries)",
+                )
+
+        dte_slice = v6.get("by_entry_dte_managed", {})
+        if dte_slice:
+            dte_rows = [
+                [
+                    bucket,
+                    str(block.get("count", 0)),
+                    _usd(block.get("median_pnl_net")),
+                    _pct100(block.get("win_rate")),
+                ]
+                for bucket, block in sorted(dte_slice.items())
+            ]
+            add_table(
+                story,
+                ["Entry DTE band", "n", "Managed median net P&amp;L", "Win %"],
+                dte_rows,
+                col_widths=[0.22, 0.08, 0.42, 0.28],
+                heading="Chain-based entry-DTE slice (managed only)",
+                footnote="Exploratory; small cells. Does not replace Section 12.1 Monte Carlo sweep.",
+            )
+
+        iv_block = v6.get("summary_iv_rank_proxy_ge_50", {})
+        iv_meta = v6.get("iv_rank_proxy", {})
+        if iv_block.get("n_trades") and iv_meta:
+            story.append(
+                P(
+                    f"<b>IV Rank proxy sensitivity:</b> Section 20 requires IV Rank &gt; 50%. "
+                    f"Pilot uses 252-day VIXCLS percentile rank ({iv_meta.get('n_entries_passing', 0)} of "
+                    f"{iv_meta.get('n_entries_total', 0)} entries pass). This is a regime proxy, not SPY IV rank."
+                )
+            )
+            _append_pilot_results_table(
+                story,
+                iv_block,
+                heading="Sensitivity: VIX percentile rank &ge; 50% at entry",
+            )
+
+        regime_paired = v6.get("by_regime_paired_diff", {})
         regime_rows = []
         for regime, block in v6.get("by_regime", {}).items():
             h = block.get("hold", {})
             m = block.get("managed", {})
+            paired = regime_paired.get(regime, {})
+            n_weeks = paired.get("count", block.get("count", 0) // 2)
+            hold_hi = paired.get("weeks_hold_higher", 0)
             regime_rows.append(
                 [
                     regime.title(),
-                    str(block.get("count", 0) // 2),
+                    str(n_weeks),
                     _usd(m.get("median_pnl_net")),
                     _usd(h.get("median_pnl_net")),
-                    _usd(m.get("p05_pnl_net")),
-                    _usd(h.get("p05_pnl_net")),
+                    _usd(paired.get("median_diff")),
+                    f"{hold_hi} / {n_weeks}",
                 ]
             )
         add_table(
             story,
-            ["Regime (VIX bin)", "n", "Managed median", "Hold median", "Managed 5th %ile", "Hold 5th %ile"],
+            ["Regime (VIX bin)", "n", "Managed median", "Hold median", "Paired med. &Delta;", "Hold &gt; mgd weeks"],
             regime_rows,
-            col_widths=[0.16, 0.06, 0.18, 0.18, 0.18, 0.18],
-            footnote="Regime tags from Section 8 VIX bins. Crisis = Mar 2020 week; small cell counts.",
+            col_widths=[0.14, 0.05, 0.16, 0.16, 0.16, 0.16],
+            footnote=(
+                "Regime tags from Section 8 VIX bins. Paired &Delta; = managed &minus; hold per entry week. "
+                "&ldquo;Hold &gt; mgd weeks&rdquo; counts weeks with higher hold P&amp;L among weeks that differ; "
+                "identical-P&amp;L weeks (often shared censored exits) explain tied medians. Crisis includes Mar 2020."
+            ),
             heading="Regime Breakdown (Pilot)",
         )
+        paired_note = _pilot_paired_note()
+        if paired_note:
+            story.append(P(paired_note))
         if (CHARTS / "fig_v6_pilot.png").is_file():
             fig_block(
                 story,
@@ -2460,26 +2971,135 @@ def build_appendix_b(story):
                 "after spread-aware costs. "
                 "<b>Divergence (important):</b> Section 21 MC claims managed strategies cut crisis 5th-percentile losses "
                 "by roughly half; the pilot does <b>not</b> replicate this&mdash;managed and hold share the same 5th %ile "
-                f"on n = {v6['n_entries']}, and Mar 2020 crisis cells show higher median P&amp;L for hold than managed. "
-                "Do not treat §21 tail-benefit claims as empirically supported until sample size and cross-month carry improve."
+                f"({_pilot_p05()}/contract on n = {v6['n_entries']}). {_pilot_paired_note()} "
+                "Do not treat &sect;21 tail-benefit claims as empirically supported until sample size and cross-month carry improve."
             )
         )
     else:
         subsection(story, "B.3 Results Summary")
         story.append(P("No v6 summary found. Run the Databento pipeline and rebuild the report."))
     subsection(story, "B.5 Limitations")
+    n_entries = _pilot_n()
     bullets(
         story,
         [
-            f"<b>Sample size:</b> {v6['n_entries']} entries vs &ge;150 Phase 1 target; confidence intervals are wide.",
-            "<b>Non-contiguous months:</b> Open positions close on month-end marks (<i>last_mark</i>) rather than true exits.",
+            f"<b>Sample size:</b> {n_entries} entries vs &ge;150 Phase 1 target; confidence intervals are wide.",
+            "<b>Non-contiguous months:</b> Many positions still close on <i>data_end</i> or <i>data_gap</i> marks; "
+            "v6.4 labels these explicitly but full cross-month carry needs a contiguous OPRA block.",
             "<b>American exercise:</b> SPY puts are American; engine uses European EOD marks.",
-            "<b>IV rank filter:</b> Section 20 IV Rank &gt; 50% rule not applied (no historical IV rank series in pilot).",
+            "<b>IV rank filter:</b> 252-day VIX percentile proxy reported in B.3; true SPY IV rank deferred until full surface history.",
             "<b>Sticky surface:</b> EOD marks miss intraday spot&ndash;vol joint moves (Section 17).",
             "<b>Survivorship:</b> Point-in-time definitions used, but liquidity filters may exclude delisted illiquid strikes.",
         ],
     )
     source(story, "Calibrated] Databento OPRA.PILLAR pulls; pipeline in project scripts/; spec in Databento_v6_Spec.md")
+
+
+def build_appendix_c(story):
+    section(
+        story,
+        "secC",
+        "Appendix C: Selected Derivations",
+        lead="Self-contained sketches for results labeled <b>[Derived]</b> in Sections 3, 14, and 22. "
+        "Standard Black&ndash;Scholes pricing and It&ocirc; calculus are assumed; see Black &amp; Scholes (1973) "
+        "and Gatheral (2006). The OTM peak-theta result is also treated rigorously in Emery, Guo &amp; Su (2008).",
+    )
+    subsection(story, "C.1 Peak theta time T* (r = 0)")
+    story.append(
+        P(
+            "Fix S, K, &sigma; &gt; 0 with S &ne; K (OTM). Under Black&ndash;Scholes with <b>r = 0</b>, the put value is "
+            "V(S, K, T, &sigma;) = K N(&minus;d<sub>2</sub>) &minus; S N(&minus;d<sub>1</sub>) with "
+            "d<sub>1</sub> = [ln(S/K) + &frac12;&sigma;&sup2;T] / (&sigma;&radic;T) and d<sub>2</sub> = d<sub>1</sub> &minus; &sigma;&radic;T. "
+            "Calendar theta is &theta; = &part;V/&part;T (negative for a long put)."
+        )
+    )
+    story.append(
+        P(
+            "For OTM puts (S &gt; K), |&theta;(T)| has an interior maximum at some T* &gt; 0 before expiry. "
+            "Differentiating and using the BS identity &part;V/&part;T = &minus;&frac12;&sigma;&sup2;S&sup2;&Gamma; "
+            "(with r = 0) reduces the condition &part;|&theta;|/&part;T = 0 to locating the peak of &Gamma;(T), which occurs "
+            "when the competing 1/&radic;T scaling and the Gaussian decay of &phi;(d<sub>1</sub>) balance. "
+            "A standard asymptotic analysis (Emery et al., 2008) yields:"
+        )
+    )
+    formula_box(
+        story,
+        [
+            "T*  =  (ln(S/K))<super>2</super> / &sigma;<super>2</super>  +  O(&sigma;<super>2</super>)",
+            "ATM (S = K):  d<sub>1</sub> independent of T  &rArr;  |&theta;| increases toward expiry  &rArr;  T* = 0",
+            "Scaling:  doubling |ln(S/K)|  &rArr;  T* shifts by 4&times;;  doubling &sigma;  &rArr;  T* shifts by 1/4",
+        ],
+    )
+    story.append(
+        P(
+            "The report uses the leading term T* &asymp; (ln(S/K))<super>2</super> / &sigma;<super>2</super> for r &le; 8% and T &lt; 0.25 years; "
+            "numerical checks show &lt; 5% error in calendar days relative to the exact BS optimum (Section 2.4). "
+            "Calls are symmetric with inverted moneyness (Section 4)."
+        )
+    )
+    source(story, "Derived] Leading term; full treatment in Emery, Guo &amp; Su (2008)")
+    subsection(story, "C.2 Gamma&ndash;theta duality (Black&ndash;Scholes PDE)")
+    story.append(
+        P(
+            "The Black&ndash;Scholes PDE for V(S, T) under constant &sigma; and r is "
+            "&part;V/&part;T + &frac12;&sigma;&sup2;S&sup2;&part;<super>2</super>V/&part;S<super>2</super> + rS&part;V/&part;S &minus; rV = 0. "
+            "Identifying &theta; = &part;V/&part;T, &Gamma; = &part;<super>2</super>V/&part;S<super>2</super>, and &Delta; = &part;V/&part;S gives:"
+        )
+    )
+    formula_box(
+        story,
+        [
+            "&theta;  =  &minus;&frac12;&sigma;&sup2; S&sup2; &Gamma;  +  r (V &minus; S &Delta;)",
+        ],
+    )
+    story.append(
+        P(
+            "Hence the time of peak |&theta;| coincides with the time of peak &Gamma; at fixed (S, K, &sigma;, r)&mdash;the "
+            "&ldquo;gamma&ndash;theta duality&rdquo; used in Sections 3 and 20.3."
+        )
+    )
+    source(story, "Derived] Standard rearrangement of the BS PDE; see Gatheral (2006), Ch. 1")
+    subsection(story, "C.3 Gamma&ndash;variance P&amp;L identity")
+    story.append(
+        P(
+            "From the second-order expansion in Section 3.2 (ignoring &Delta;, &nu;, &rho; over a short interval), "
+            "&Delta;V &asymp; &frac12; &Gamma; (dS)<super>2</super>. Under geometric Brownian motion with <b>realized</b> "
+            "volatility &sigma;<sub>real</sub>, the quadratic variation over step &Delta;t gives "
+            "(dS)<super>2</super> = &sigma;<super>2</super><sub>real</sub> S<super>2</super> &Delta;t + o(&Delta;t). "
+            "Summing over N steps with &Gamma; held fixed (illustrative constant-&Gamma; approximation):"
+        )
+    )
+    formula_box(
+        story,
+        [
+            "P&amp;L<sub>&gamma;</sub>  &asymp;  &frac12; &Gamma; S<super>2</super> &sum;<sub>k=1</sub><super>N</super> "
+            "(&sigma;<super>2</super><sub>real,k</sub> &minus; &sigma;<super>2</super><sub>impl</sub>) &Delta;t<sub>k</sub>",
+            "Short premium: favorable when &sigma;<super>2</super><sub>real</sub> &lt; &sigma;<super>2</super><sub>impl</sub> (path calm vs priced vol)",
+        ],
+    )
+    story.append(
+        P(
+            "The implied variance &sigma;<super>2</super><sub>impl</sub> enters through &Gamma;, which is computed at the sold strike using "
+            "priced IV. Section 14 isolates this channel in simulation by fixing &sigma;<sub>impl</sub> and varying "
+            "&sigma;<sub>real</sub>. The identity is exact in the continuous-time limit for a delta-hedged book under "
+            "constant &Gamma;; for unhedged short options, &Delta; and &nu; terms add path dependence (Section 3.5)."
+        )
+    )
+    source(story, "Derived] Discrete sum of &frac12;&Gamma;&middot;dS&sup2;; Carr &amp; Wu (2009) for VRP context")
+    subsection(story, "C.4 Results cited without proof")
+    add_table(
+        story,
+        ["Result", "Primary reference", "Report use"],
+        [
+            ["Black&ndash;Scholes formula and Greeks", "Black &amp; Scholes (1973); Gatheral (2006)", "Sections 2&ndash;5"],
+            ["OTM theta peak (full)", "Emery, Guo &amp; Su (2008)", "Sections 3, 4, 20"],
+            ["Merton jump mixture pricing", "Merton (1976)", "Section 11"],
+            ["Variance risk premium", "Carr &amp; Wu (2009); Bollerslev et al. (2009)", "Sections 1, 14"],
+            ["Effective option spreads", "Muravyev &amp; Pearson (2020)", "Sections 9, 19"],
+        ],
+        col_widths=[0.28, 0.38, 0.34],
+        footnote="Monte Carlo outputs (Sections 8, 10, 12, 21) are estimators of model quantities, not theorems; see Appendix A.5.",
+    )
 
 
 def build_future_work(story):
@@ -2499,19 +3119,19 @@ def build_future_work(story):
                 "Phase 1 acceptance; replace Figure D with real CDFs",
             ],
             [
-                "P0",
-                "Cross-month position carry (fix month-end last_mark exits)",
-                "Realistic managed vs hold comparison",
+                "P0 (partial &mdash; v6.4)",
+                "Cross-month position carry &mdash; exit reasons labeled (data_end / data_gap); full carry needs contiguous pulls",
+                "Cleaner managed vs hold comparison; fewer censored exits",
             ],
             [
-                "P1",
-                "Replace Section 12.1 DTE sweep with chain-based sweep",
-                "Empirical DTE &times; profit target surface",
+                "P1 (partial &mdash; v6.4)",
+                "Chain-based entry-DTE slice in Appendix B; Section 12.1 MC sweep unchanged",
+                "Directional empirical DTE check pending larger n",
             ],
             [
-                "P1",
-                "Historical IV rank series for Section 20 IV filter",
-                "Full rule-set fidelity",
+                "P1 (partial &mdash; v6.4)",
+                "Section 20 IV Rank &mdash; 252d VIX percentile proxy in pilot summary",
+                "Full SPY IV rank series when surface history is complete",
             ],
             [
                 "P2",
@@ -2539,8 +3159,9 @@ def build_future_work(story):
     )
     story.append(
         P(
-            "Until P0 items are complete, Monte Carlo results in Sections 12 and 21 remain the primary quantitative "
-            "framework. Appendix B should be read as a feasibility check, not confirmation of simulated magnitudes."
+            "Until P0 OPRA expansion is complete, Monte Carlo results in Sections 12 and 21 remain the primary quantitative "
+            "framework. Appendix B should be read as a feasibility check, not confirmation of simulated magnitudes. "
+            "v6.4 syncs pilot charts and prose to v6_summary.json; further cleanup when a full contiguous dataset is available."
         )
     )
 
@@ -2574,6 +3195,8 @@ _ORPHAN_HEADING = re.compile(
     r"\d+\.\s+[A-Z]|"  # 1. Introduction (section at page bottom — rare)
     r"[A-Z]\.\d+\s+\S|"  # A.3 Path Counts
     r"Appendix\s+[A-Z]:|"
+    r"Selected Derivations|"
+    r"Desk Quick Reference|"
     r"Evidence Map|"
     r"Future Work|"
     r"Historical Validation|"  # Appendix A:
@@ -2596,7 +3219,7 @@ def scan_orphaned_headers(pdf_path: Path) -> list[tuple[int, str]]:
 
     orphans: list[tuple[int, str]] = []
     reader = PdfReader(str(pdf_path))
-    skip_pages = {1, 2}  # title + TOC
+    skip_pages = {1, 2, 3}  # title + TOC + desk reference
     for idx, page in enumerate(reader.pages, start=1):
         if idx in skip_pages:
             continue
@@ -2616,6 +3239,7 @@ def build_story(page_map: dict[str, int] | None = None):
     story = []
     add_title_page(story)
     add_toc(story, page_map)
+    add_desk_reference(story)
     build_section_1(story)
     build_section_2(story)
     build_section_3(story)
@@ -2641,6 +3265,7 @@ def build_story(page_map: dict[str, int] | None = None):
     build_section_23(story)
     build_appendix(story)
     build_appendix_b(story)
+    build_appendix_c(story)
     build_future_work(story)
     build_references(story)
     return story
