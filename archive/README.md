@@ -2,6 +2,8 @@
 
 Version history and early project artifacts tracked in git.
 
+**Narrative timeline:** [`docs/HISTORY.md`](../docs/HISTORY.md)
+
 | Path | Contents |
 |------|----------|
 | `old_pdfs/` | Milestone report PDFs (v4.4 through v6.1) |
