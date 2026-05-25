@@ -21,7 +21,7 @@ Thumbs.db
 
 # PDF builds — track current release only
 report/output/Theta_Decay_Dynamics_v*.pdf
-!report/output/Theta_Decay_Dynamics_v6.4.pdf
+!report/output/Theta_Decay_Dynamics_v6.5.pdf
 
 # Archive — ignore local scratch & personal tooling; history is tracked
 archive/cursor-skills/

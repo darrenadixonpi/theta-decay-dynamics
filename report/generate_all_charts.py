@@ -1,5 +1,9 @@
 """
 Consolidated chart generation for Theta Decay Dynamics Report v4.4+.
+
+DTE profile charts use plot_dte() / dte_x() / dte_y() so x (high DTE left,
+expiry right) matches y[i] at dtes[i]. Do not plot dtes[::-1] against
+values computed in forward dtes order.
 """
 import numpy as np, matplotlib; matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -22,17 +26,28 @@ plt.rcParams.update({'figure.facecolor':'#FAFAFA','axes.facecolor':'#FFFFFF','ax
     'savefig.bbox':'tight','savefig.pad_inches':0.15})
 def save(fig, name): fig.savefig(f'{OUTDIR}/{name}.png'); plt.close(fig); print(f'  {name}')
 
+def dte_x(dtes):
+    """X axis for DTE charts: high DTE left, expiry (0) on the right."""
+    return dtes[::-1]
+
+def dte_y(y):
+    """Reverse series so y[i] aligns with dtes[i] on dte_x(dtes)."""
+    return np.asarray(y)[::-1]
+
+def plot_dte(ax, dtes, y, *args, **kwargs):
+    ax.plot(dte_x(dtes), dte_y(y), *args, **kwargs)
+
 def fig01():
     fig,ax=plt.subplots(figsize=(8,6)); dtes=np.arange(1,181)
     for i,(m,l) in enumerate([(1.00,'ATM (S/K=1.00)'),(1.05,'S/K=1.05'),(1.10,'S/K=1.10'),(1.20,'S/K=1.20'),(1.40,'S/K=1.40'),(0.90,'S/K=0.90 (ITM)')]):
-        ax.plot(dtes[::-1],[short_put_theta(m*K,K,r_rate,0.80,d/365) for d in dtes],color=PAL[i],label=l)
+        plot_dte(ax, dtes, [short_put_theta(m*K,K,r_rate,0.80,d/365) for d in dtes], color=PAL[i], label=l)
     ax.set_xlabel('Days to Expiry');ax.set_ylabel('Daily Theta Collected ($/share)')
     ax.set_title('Short Put: Theta vs DTE by Moneyness (\u03c3 = 80%)');ax.set_xlim(180,0);ax.legend();save(fig,'fig01_put_moneyness')
 
 def fig02():
     fig,ax=plt.subplots(figsize=(8,6));dtes=np.arange(1,181);S=1.30*K
     for i,iv in enumerate([0.40,0.60,0.80,1.20,1.80,2.50]):
-        ax.plot(dtes[::-1],[short_put_theta(S,K,r_rate,iv,d/365) for d in dtes],color=PAL[i%6],label=f'IV={int(iv*100)}%')
+        plot_dte(ax, dtes, [short_put_theta(S,K,r_rate,iv,d/365) for d in dtes], color=PAL[i%6], label=f'IV={int(iv*100)}%')
     ax.set_xlabel('Days to Expiry');ax.set_ylabel('Daily Theta ($/share)')
     ax.set_title('Short Put IV Effect: S/K = 1.30, K = $100');ax.set_xlim(180,0);ax.legend();save(fig,'fig02_put_iv')
 
@@ -40,7 +55,7 @@ def fig03():
     fig,(a1,a2)=plt.subplots(1,2,figsize=(10,5));dtes=np.arange(1,181)
     for ax,S,t in [(a1,1.30*K,'OTM (S/K = 1.30)'),(a2,K,'ATM (S/K = 1.00)')]:
         for iv,ls,c in [(0.60,'-',PAL[0]),(1.20,'--',PAL[1])]:
-            ax.plot(dtes[::-1],[short_put_theta(S,K,r_rate,iv,d/365) for d in dtes],ls,color=c,label=f'IV={int(iv*100)}%')
+            plot_dte(ax, dtes, [short_put_theta(S,K,r_rate,iv,d/365) for d in dtes], ls, color=c, label=f'IV={int(iv*100)}%')
         ax.set_title(t);ax.set_xlabel('DTE');ax.set_ylabel('Theta ($/day)');ax.legend();ax.set_xlim(180,0)
     fig.suptitle('IV Shock Asymmetry: OTM vs ATM Short Puts',fontsize=12,fontweight='bold',y=1.02);fig.tight_layout();save(fig,'fig03_put_iv_shock')
 
@@ -49,7 +64,7 @@ def fig04():
     sk=np.linspace(0.80,1.50,45);dtes=np.linspace(1,120,45);SK,DTE=np.meshgrid(sk,dtes)
     Z=np.vectorize(lambda s,d:short_put_theta(s*K,K,r_rate,0.80,d/365))(SK,DTE)
     ax.plot_surface(SK,DTE,Z,cmap='viridis',alpha=0.88,edgecolor='none')
-    ax.set_xlabel('S/K',labelpad=10);ax.set_ylabel('DTE',labelpad=10);ax.set_zlabel('Theta',labelpad=8)
+    ax.set_xlabel('S/K',labelpad=10);ax.set_ylabel('DTE',labelpad=10);ax.set_zlabel('Theta ($/day)',labelpad=8)
     ax.set_title('Short Put Theta Surface (\u03c3 = 80%)',pad=15);ax.view_init(elev=28,azim=225);save(fig,'fig04_put_surface')
 
 def fig05():
@@ -62,37 +77,37 @@ def fig05():
 def fig06():
     fig,ax=plt.subplots(figsize=(8,6));dtes=np.arange(1,181)
     for i,(m,l) in enumerate([(1.00,'ATM'),(0.95,'S/K=0.95 (OTM)'),(0.90,'S/K=0.90'),(0.80,'S/K=0.80'),(0.70,'S/K=0.70'),(1.10,'S/K=1.10 (ITM)')]):
-        ax.plot(dtes[::-1],[short_call_theta(m*K,K,r_rate,0.80,d/365) for d in dtes],color=PAL[i],label=l)
+        plot_dte(ax, dtes, [short_call_theta(m*K,K,r_rate,0.80,d/365) for d in dtes], color=PAL[i], label=l)
     ax.set_xlabel('DTE');ax.set_ylabel('Daily Theta ($/share)');ax.set_title('Short Call: Theta vs DTE by Moneyness (\u03c3 = 80%)')
     ax.set_xlim(180,0);ax.legend();save(fig,'fig06_call_moneyness')
 
 def fig07():
     fig,ax=plt.subplots(figsize=(8,6));dtes=np.arange(1,181)
     for i,(sk,l) in enumerate([(1.00,'ATM (S=K)'),(1.05,'S/K=1.05'),(1.10,'S/K=1.10'),(1.20,'S/K=1.20'),(0.90,'S/K=0.90'),(0.80,'S/K=0.80')]):
-        S=sk*K;ax.plot(dtes[::-1],[short_put_theta(S,K,r_rate,0.80,d/365)+short_call_theta(S,K,r_rate,0.80,d/365) for d in dtes],color=PAL[i],label=l)
+        S=sk*K;plot_dte(ax,dtes,[short_put_theta(S,K,r_rate,0.80,d/365)+short_call_theta(S,K,r_rate,0.80,d/365) for d in dtes],color=PAL[i],label=l)
     ax.set_xlabel('DTE');ax.set_ylabel('Daily Theta ($/share)');ax.set_title('Short Straddle: Theta vs DTE (\u03c3 = 80%)')
     ax.set_xlim(180,0);ax.legend();save(fig,'fig07_straddle')
 
 def fig08():
     fig,ax=plt.subplots(figsize=(8,6));dtes=np.arange(1,181);S=100.0
     for w,c in [(5,PAL[0]),(10,PAL[1]),(20,PAL[2]),(30,PAL[3])]:
-        ax.plot(dtes[::-1],[short_put_theta(S,K-w,r_rate,0.80,d/365)+short_call_theta(S,K+w,r_rate,0.80,d/365) for d in dtes],color=c,label=f'\u00b1{w} ({int(K-w)}P/{int(K+w)}C)')
-    ax.plot(dtes[::-1],[short_put_theta(S,K,r_rate,0.80,d/365)+short_call_theta(S,K,r_rate,0.80,d/365) for d in dtes],'--',color=PAL[4],label='Straddle (ref)')
+        plot_dte(ax,dtes,[short_put_theta(S,K-w,r_rate,0.80,d/365)+short_call_theta(S,K+w,r_rate,0.80,d/365) for d in dtes],color=c,label=f'\u00b1{w} ({int(K-w)}P/{int(K+w)}C)')
+    plot_dte(ax,dtes,[short_put_theta(S,K,r_rate,0.80,d/365)+short_call_theta(S,K,r_rate,0.80,d/365) for d in dtes],'--',color=PAL[4],label='Straddle (ref)')
     ax.set_xlabel('DTE');ax.set_ylabel('Daily Theta ($/share)');ax.set_title('Short Strangle: Theta by Wing Width (\u03c3 = 80%, S = $100)')
     ax.set_xlim(180,0);ax.legend();save(fig,'fig08_strangle')
 
 def fig09():
     fig,ax=plt.subplots(figsize=(8,6));dtes=np.arange(1,181);S=105.0;Ks=100.0
     for i,w in enumerate([5,10,20,30]):
-        ax.plot(dtes[::-1],[short_put_theta(S,Ks,r_rate,0.80,d/365)-short_put_theta(S,Ks-w,r_rate,0.80,d/365) for d in dtes],color=PAL[i],label=f'${w} wide ({int(Ks)}P/{int(Ks-w)}P)')
-    ax.plot(dtes[::-1],[short_put_theta(S,Ks,r_rate,0.80,d/365) for d in dtes],'--',color=PAL[4],label='Naked 100P (ref)')
+        plot_dte(ax,dtes,[short_put_theta(S,Ks,r_rate,0.80,d/365)-short_put_theta(S,Ks-w,r_rate,0.80,d/365) for d in dtes],color=PAL[i],label=f'${w} wide ({int(Ks)}P/{int(Ks-w)}P)')
+    plot_dte(ax,dtes,[short_put_theta(S,Ks,r_rate,0.80,d/365) for d in dtes],'--',color=PAL[4],label='Naked 100P (ref)')
     ax.set_xlabel('DTE');ax.set_ylabel('Daily Net Theta ($/share)');ax.set_title(f'Bull Put Spread: Net Theta by Width (S=${int(S)}, \u03c3 = 80%)')
     ax.set_xlim(180,0);ax.legend();save(fig,'fig09_credit_spread')
 
 def fig10():
     fig,ax=plt.subplots(figsize=(8,6));dtes=np.arange(1,181);S=100.0
     for i,(l,Kpl,Kps,Kcs,Kcl) in enumerate([('Narrow: 85P/95P/105C/115C',85,95,105,115),('Medium: 80P/90P/110C/120C',80,90,110,120),('Wide: 70P/80P/120C/130C',70,80,120,130)]):
-        ax.plot(dtes[::-1],[short_put_theta(S,Kps,r_rate,0.80,d/365)-short_put_theta(S,Kpl,r_rate,0.80,d/365)+short_call_theta(S,Kcs,r_rate,0.80,d/365)-short_call_theta(S,Kcl,r_rate,0.80,d/365) for d in dtes],color=PAL[i],label=l)
+        plot_dte(ax,dtes,[short_put_theta(S,Kps,r_rate,0.80,d/365)-short_put_theta(S,Kpl,r_rate,0.80,d/365)+short_call_theta(S,Kcs,r_rate,0.80,d/365)-short_call_theta(S,Kcl,r_rate,0.80,d/365) for d in dtes],color=PAL[i],label=l)
     ax.set_xlabel('DTE');ax.set_ylabel('Daily Net Theta ($/share)');ax.set_title('Iron Condor: Net Theta by Configuration (\u03c3 = 80%, S = $100)')
     ax.set_xlim(180,0);ax.legend();save(fig,'fig10_iron_condor')
 
@@ -102,10 +117,11 @@ def fig11():
     t2=np.array([(short_put_theta(100,80,r_rate,0.90,d/365)+short_call_theta(100,120,r_rate,0.90,d/365))*100 for d in dtes])
     t3=np.array([(short_put_theta(105,95,r_rate,1.10,d/365)-short_put_theta(105,85,r_rate,1.10,d/365))*100 for d in dtes])
     t4=np.array([short_put_theta(52,40,r_rate,0.55,d/365)*100 for d in dtes])
-    x=dtes[::-1]
-    ax.stackplot(x,t1,t2,t3,t4,colors=[PAL[0],PAL[2],PAL[3],PAL[4]],alpha=0.75,
+    x=dte_x(dtes)
+    stacks=dte_y(t1),dte_y(t2),dte_y(t3),dte_y(t4)
+    ax.stackplot(x,*stacks,colors=[PAL[0],PAL[2],PAL[3],PAL[4]],alpha=0.75,
                  labels=['ATM CSP ($50P, IV=35%)','OTM Strangle (80P/120C, IV=90%)','Credit Spread (95P/85P, IV=110%)','OTM CSP ($40P, IV=55%)'])
-    ax.plot(x,t1+t2+t3+t4,'k-',linewidth=1.5,label='Net Total')
+    ax.plot(x,dte_y(t1+t2+t3+t4),'k-',linewidth=1.5,label='Net Total')
     ax.set_xlabel('Days to Expiry');ax.set_ylabel('Daily Theta ($/day per contract)')
     ax.set_title('Portfolio Theta Aggregation: 4 Positions Over 45 DTE');ax.set_xlim(45,0);ax.legend(fontsize=7,loc='upper left');save(fig,'fig11_portfolio')
 
@@ -122,19 +138,19 @@ def fig_sens_grid():
 
 def fig_skew():
     fig,(a1,a2)=plt.subplots(1,2,figsize=(10,5));dtes=np.arange(1,91);S=100
-    a1.plot(dtes[::-1],[short_put_theta(S,90,r_rate,0.25,d/365) for d in dtes],color=PAL[0],label='Flat IV = 25%')
-    a1.plot(dtes[::-1],[short_put_theta(S,90,r_rate,0.35,d/365) for d in dtes],color=PAL[1],label='Skewed IV = 35%')
+    plot_dte(a1,dtes,[short_put_theta(S,90,r_rate,0.25,d/365) for d in dtes],color=PAL[0],label='Flat IV = 25%')
+    plot_dte(a1,dtes,[short_put_theta(S,90,r_rate,0.35,d/365) for d in dtes],color=PAL[1],label='Skewed IV = 35%')
     a1.set_title('OTM Put (K=$90): Flat vs Skewed IV');a1.set_xlabel('DTE');a1.set_ylabel('Theta ($/day)');a1.legend(fontsize=7);a1.set_xlim(90,0)
-    a2.plot(dtes[::-1],[short_put_theta(S,90,r_rate,0.25,d/365)+short_call_theta(S,110,r_rate,0.25,d/365) for d in dtes],color=PAL[0],label='Flat IV = 25% both legs')
-    a2.plot(dtes[::-1],[short_put_theta(S,90,r_rate,0.32,d/365)+short_call_theta(S,110,r_rate,0.20,d/365) for d in dtes],color=PAL[1],label='Skewed: put 32% / call 20%')
+    plot_dte(a2,dtes,[short_put_theta(S,90,r_rate,0.25,d/365)+short_call_theta(S,110,r_rate,0.25,d/365) for d in dtes],color=PAL[0],label='Flat IV = 25% both legs')
+    plot_dte(a2,dtes,[short_put_theta(S,90,r_rate,0.32,d/365)+short_call_theta(S,110,r_rate,0.20,d/365) for d in dtes],color=PAL[1],label='Skewed: put 32% / call 20%')
     a2.set_title('Strangle (90P/110C): Flat vs Skewed IV');a2.set_xlabel('DTE');a2.set_ylabel('Theta ($/day)');a2.legend(fontsize=7);a2.set_xlim(90,0)
     fig.suptitle('Volatility Skew Impact on Theta Profiles',fontsize=11,fontweight='bold');fig.tight_layout(rect=[0,0,1,0.96]);save(fig,'fig_skew')
 
 def fig_merton():
     fig,(a1,a2)=plt.subplots(1,2,figsize=(10,5));dtes=np.arange(1,181)
     for ax,S,t in [(a1,K,'ATM (S/K = 1.00)'),(a2,1.30*K,'OTM (S/K = 1.30)')]:
-        ax.plot(dtes[::-1],[short_put_theta(S,K,r_rate,0.59,d/365) for d in dtes],color=PAL[0],label='BS (\u03c3=59%)')
-        ax.plot(dtes[::-1],[short_put_theta_merton(S,K,r_rate,0.35,d/365,2.5,0.0,0.20) for d in dtes],'--',color=PAL[1],label='Merton (\u03c3d=35%, \u03bb=2.5)')
+        plot_dte(ax,dtes,[short_put_theta(S,K,r_rate,0.59,d/365) for d in dtes],color=PAL[0],label='BS (\u03c3=59%)')
+        plot_dte(ax,dtes,[short_put_theta_merton(S,K,r_rate,0.35,d/365,2.5,0.0,0.20) for d in dtes],'--',color=PAL[1],label='Merton (\u03c3d=35%, \u03bb=2.5)')
         ax.set_title(t);ax.set_xlabel('DTE');ax.set_ylabel('Theta ($/day)');ax.legend();ax.set_xlim(180,0)
     fig.suptitle('Merton vs Black-Scholes Theta',fontsize=12,fontweight='bold',y=1.02);fig.tight_layout();save(fig,'fig_merton')
 
@@ -142,9 +158,10 @@ def fig_costs():
     fig,ax=plt.subplots(figsize=(8,6));dtes=np.arange(1,46);S=105;Ks=100;sigma=0.80
     gross=np.array([short_put_theta(S,Ks,r_rate,sigma,d/365)*100 for d in dtes])
     prem=bs_put_price(S,Ks,r_rate,sigma,45/365)
-    ax.plot(dtes[::-1],gross,color=PAL[4],lw=2.2,label='Gross Theta')
+    plot_dte(ax,dtes,gross,color=PAL[4],lw=2.2,label='Gross Theta')
     for l,sp_,comm,c in [('Retail (3%, $0.65)',0.03,0.65,PAL[1]),('Active (2%, $0.50)',0.02,0.50,PAL[3]),('Institutional (1%, $0.10)',0.01,0.10,PAL[0])]:
-        ax.plot(dtes[::-1],gross-compute_transaction_costs(prem,sp_,1,comm)/45,'--',color=c,lw=1.5,label=l)
+        net=gross-compute_transaction_costs(prem,sp_,1,comm)/45
+        plot_dte(ax,dtes,net,'--',color=c,lw=1.5,label=l)
     ax.set_xlabel('Days to Expiry');ax.set_ylabel('Daily Theta ($/day)');ax.set_title('Net Theta After Transaction Costs')
     ax.set_xlim(45,0);ax.axhline(0,color='#9CA3AF',lw=0.5);ax.legend();save(fig,'fig_costs')
 
@@ -466,7 +483,7 @@ def fig_v5_greeks():
         (axes[1, 1], spd, 'Speed (dΓ/dS)', 'Gamma convexity'),
     ]
     for ax, vals, ylab, subtitle in panels:
-        ax.plot(dtes[::-1], vals, color=PAL[0], lw=2.2)
+        plot_dte(ax, dtes, vals, color=PAL[0], lw=2.2)
         ax.set_xlabel('Days to Expiry')
         ax.set_ylabel(ylab)
         ax.set_title(subtitle)
@@ -530,7 +547,7 @@ def fig_greek_evolution():
         for i, (sk, label) in enumerate(spot_levels):
             S = sk * K
             vals = [fn(S, d / 365.0) for d in dtes]
-            ax.plot(dtes[::-1], vals, color=PAL[i], lw=2, label=label)
+            plot_dte(ax, dtes, vals, color=PAL[i], lw=2, label=label)
         ax.set_xlabel('Days to Expiry')
         ax.set_ylabel(ylab)
         ax.set_xlim(90, 0)
@@ -641,9 +658,9 @@ def fig_model_risk():
         iv_eff = 0.25 + 0.12 * max(0, log(Kp / S)) + 0.08 * 0.25
         sv_t.append(short_put_theta(S, Kp, r_rate, iv_eff, T))
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(10, 4.8))
-    a1.plot(dtes[::-1], bs_t, color=PAL[0], lw=2, label='Black-Scholes (flat σ=25%)')
-    a1.plot(dtes[::-1], me_t, color=PAL[1], lw=2, ls='--', label='Merton (jumps)')
-    a1.plot(dtes[::-1], sv_t, color=PAL[3], lw=2, ls='-.', label='Stoch-vol adjusted (skew+ρ)')
+    plot_dte(a1, dtes, bs_t, color=PAL[0], lw=2, label='Black-Scholes (flat σ=25%)')
+    plot_dte(a1, dtes, me_t, color=PAL[1], lw=2, ls='--', label='Merton (jumps)')
+    plot_dte(a1, dtes, sv_t, color=PAL[3], lw=2, ls='-.', label='Stoch-vol adjusted (skew+ρ)')
     a1.set_xlabel('Days to Expiry')
     a1.set_ylabel('Daily θ ($/share)')
     a1.set_title('Model Comparison: Theta Profile')
@@ -651,7 +668,7 @@ def fig_model_risk():
     a1.legend(fontsize=7)
     models = ['BS', 'Merton', 'Stoch-Vol\n(adj.)']
     peaks = [max(bs_t), max(me_t), max(sv_t)]
-    tstars = [dtes[::-1][np.argmax(bs_t)], dtes[::-1][np.argmax(me_t)], dtes[::-1][np.argmax(sv_t)]]
+    tstars = [dtes[np.argmax(bs_t)], dtes[np.argmax(me_t)], dtes[np.argmax(sv_t)]]
     a2.bar(models, peaks, color=[PAL[0], PAL[1], PAL[3]], edgecolor='white')
     a2.set_ylabel('Peak Daily θ ($/share)')
     a2.set_title('Peak Theta by Model')

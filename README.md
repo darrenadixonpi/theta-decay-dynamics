@@ -2,7 +2,7 @@
 
 Research report on short-premium theta timing, Greek interactions, regime behavior, and Section 20 management rules — with a pilot SPY options-chain validation (Appendix B).
 
-**Current release:** [`report/output/Theta_Decay_Dynamics_v6.4.pdf`](report/output/Theta_Decay_Dynamics_v6.4.pdf)
+**Current release:** [`report/output/Theta_Decay_Dynamics_v6.5.pdf`](report/output/Theta_Decay_Dynamics_v6.5.pdf)
 
 **Project history:** [`docs/HISTORY.md`](docs/HISTORY.md) — version timeline, reconstruction story, archived PDFs, and v6 pilot results.
 

@@ -16,7 +16,7 @@ python report/generate_all_charts.py
 # Pilot-only refresh (after backtest_report_v6.py):
 # python -c "import sys; sys.path.insert(0,'report'); from generate_all_charts import fig_v6_pilot; fig_v6_pilot()"
 
-# 2. PDF → report/output/Theta_Decay_Dynamics_v6.4.pdf
+# 2. PDF → report/output/Theta_Decay_Dynamics_v6.5.pdf
 python report/build_report.py
 
 # 3. Audit (optional)
@@ -33,7 +33,7 @@ python report/audit_report.py
 | `audit_report.py` | Page/glyph/text checks |
 | `signal_summary.json` | Section 7 surface signal data |
 | `charts/` | Generated figure assets |
-| `output/` | Built PDF (only v6.4 tracked in git) |
+| `output/` | Built PDF (only v6.5 tracked in git) |
 
 ## Appendix B (chain validation)
 

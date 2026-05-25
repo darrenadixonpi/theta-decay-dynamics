@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Theta Decay Dynamics PDF (v6.4)."""
+"""Build Theta Decay Dynamics PDF (v6.5)."""
 from __future__ import annotations
 
 import io
@@ -29,7 +29,7 @@ from PIL import Image as PILImage
 REPORT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = REPORT_DIR.parent
 CHARTS = REPORT_DIR / "charts"
-OUT_PDF = REPORT_DIR / "output" / "Theta_Decay_Dynamics_v6.4.pdf"
+OUT_PDF = REPORT_DIR / "output" / "Theta_Decay_Dynamics_v6.5.pdf"
 SIGNALS = json.loads((REPORT_DIR / "signal_summary.json").read_text(encoding="utf-8"))
 V6_SUMMARY_PATH = REPO_ROOT / "data" / "v6" / "v6_summary.json"
 
@@ -774,7 +774,7 @@ def add_title_page(story):
     story.append(P("Moneyness, Volatility &amp; Strategy-Level Analysis", "Subtitle"))
     story.append(P("With a Merton Jump-Diffusion Extension for Event-Driven Underlyings", "Subtitle"))
     story.append(Spacer(1, 0.2 * inch))
-    story.append(P("v6.4 &mdash; May 2026", "Subtitle"))
+    story.append(P("v6.5 &mdash; May 2026", "Subtitle"))
     story.append(Spacer(1, 0.35 * inch))
     story.append(
         P(
@@ -1262,7 +1262,7 @@ def build_section_3(story):
         [
             "T*  &asymp;  (ln(S/K))<super>2</super> / &sigma;<super>2</super>",
             "Doubling distance from ATM  &rarr;  peak shifts 4&times; earlier",
-            "Doubling IV  &rarr;  peak shifts 4&times; later",
+            "Doubling IV  &rarr;  T* divides by 4; peak moves toward expiry (lower remaining DTE)",
             "At ATM (S = K):  T* = 0, peaks at expiry",
         ],
     )
@@ -1379,9 +1379,9 @@ def build_section_4(story):
     )
     story.append(
         P(
-            "ATM: theta accelerates because gamma concentrates at the strike. S/K=1.05: peak &asymp; DTE 10. "
-            "S/K=1.20: peaks near DTE 30. S/K=1.40: peaks &asymp; DTE 60. ITM (S/K=0.90): plateaus, can turn negative. "
-            "Takeaway: OTM short puts do not accelerate into expiry."
+            "ATM: theta accelerates toward expiry (T* = 0). S/K = 1.10: interior peak &asymp; 5 DTE. "
+            "S/K = 1.20: peak &asymp; 18 DTE. S/K = 1.40: peak &asymp; 59 DTE (&sigma; = 80%). "
+            "Takeaway: sufficiently OTM short puts do not accelerate into expiry; near-ATM wings still do."
         )
     )
     add_table(story,
@@ -1401,8 +1401,8 @@ def build_section_4(story):
     fig_block(story, "fig02_put_iv", "Figure 2: IV effect on OTM short put. S/K = 1.30.", title="4.1.2 IV Effect")
     story.append(
         P(
-            "Low IV: early peak with low magnitude. High IV widens the distribution, making the option behave like near-ATM&mdash;"
-            "peak shifts near expiry with approximately 10&times; magnitude."
+            "Low IV: interior peak far from expiry with low magnitude. High IV widens the distribution, making the option behave like near-ATM&mdash;"
+            "peak shifts toward expiry with approximately 10&times; magnitude at S/K = 1.30."
         )
     )
     fig_block(
@@ -1413,7 +1413,8 @@ def build_section_4(story):
     )
     story.append(
         P(
-            "OTM: peak theta increases 3&ndash;4&times;, shifts 20&ndash;40 days later. ATM: magnitude only. "
+            "OTM: peak theta increases 3&ndash;4&times; and the interior hump collapses toward expiry (e.g. 63 &rarr; 17 DTE at S/K = 1.30). "
+            "ATM: magnitude scales up; shape still accelerates toward expiry. "
             "Selling OTM premium ahead of events is most theta-efficient because the IV shock increases extrinsic value."
         )
     )
@@ -1823,7 +1824,7 @@ def build_section_11(story):
     fig_block(
         story,
         "fig_merton",
-        "Figure 15: Merton vs BS theta. Left: ATM (nearly identical). Right: OTM (Merton higher, later peak).",
+        "Figure 15: Merton vs BS theta. Left: ATM (nearly identical). Right: OTM (Merton higher; peak closer to expiry).",
     )
     story.append(
         P(
@@ -2043,7 +2044,7 @@ def build_section_22(story):
             [
                 ["1", "T* peak timing", "[Derived]", "Robust", "T* &asymp; (ln(S/K))<super>2</super>/&sigma;<super>2</super>. ATM at expiry; OTM earlier."],
                 ["2", "Moneyness effect", "[Derived]", "Robust", "ATM&rarr;OTM shifts peak earlier. Quadratic."],
-                ["3", "IV effect", "[Derived]", "Robust", "Higher IV delays OTM peak, increases magnitude."],
+                ["3", "IV effect", "[Derived]", "Robust", "Higher IV pulls OTM peak toward expiry (T* &divide; 4 if &sigma; doubles); increases magnitude."],
                 ["4", "IV shock asymmetry", "[Derived]", "Robust", "OTM: structural shift. ATM: magnitude only."],
                 ["5", "Gamma-theta duality", "[Derived]", "Robust", "Theta tracks gamma at all moneyness."],
                 ["6", "Multi-leg composition", "[Derived]", "Robust", "Composite theta = sum of legs."],
